@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ATen/ATenGeneral.h"
-#include "ATen/CPUGeneral.h"
 #include "ATen/Allocator.h"
 #include "ATen/Scalar.h"
 #include "ATen/Type.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <memory>
 #include <ATen/ATen.h>
 
@@ -20,7 +20,7 @@ struct THPVariable {
 THP_API PyObject *THPVariableClass;
 
 bool THPVariable_initModule(PyObject *module);
-THP_API PyObject * THPVariable_Wrap(torch::autograd::Variable var);
+PyObject * THPVariable_Wrap(torch::autograd::Variable var);
 
 inline bool THPVariable_Check(PyObject *obj)
 {

@@ -3,21 +3,17 @@ from collections import defaultdict, Iterable
 import torch
 from copy import deepcopy
 from itertools import chain
+from torch.autograd import Variable
 
 required = object()
 
 
 class Optimizer(object):
-    r"""Base class for all optimizers.
-
-    .. warning::
-        Parameters need to be specified as collections that have a deterministic
-        ordering that is consistent between runs. Examples of objects that don't
-        satisfy those properties are sets and iterators over values of dictionaries.
+    """Base class for all optimizers.
 
     Arguments:
-        params (iterable): an iterable of :class:`torch.Tensor` s or
-            :class:`dict` s. Specifies what Tensors should be optimized.
+        params (iterable): an iterable of :class:`Variable` s or
+            :class:`dict` s. Specifies what Variables should be optimized.
         defaults: (dict): a dict containing default values of optimization
             options (used when a parameter group doesn't specify them).
     """
@@ -25,9 +21,9 @@ class Optimizer(object):
     def __init__(self, params, defaults):
         self.defaults = defaults
 
-        if isinstance(params, torch.Tensor):
+        if isinstance(params, Variable) or torch.is_tensor(params):
             raise TypeError("params argument given to the optimizer should be "
-                            "an iterable of Tensors or dicts, but got " +
+                            "an iterable of Variables or dicts, but got " +
                             torch.typename(params))
 
         self.state = defaultdict(dict)
@@ -63,7 +59,7 @@ class Optimizer(object):
         return format_string
 
     def state_dict(self):
-        r"""Returns the state of the optimizer as a :class:`dict`.
+        """Returns the state of the optimizer as a :class:`dict`.
 
         It contains two entries:
 
@@ -71,14 +67,14 @@ class Optimizer(object):
             differs between optimizer classes.
         * param_groups - a dict containing all parameter groups
         """
-        # Save ids instead of Tensors
+        # Save ids instead of Variables
         def pack_group(group):
             packed = {k: v for k, v in group.items() if k != 'params'}
             packed['params'] = [id(p) for p in group['params']]
             return packed
         param_groups = [pack_group(g) for g in self.param_groups]
         # Remap state to use ids as keys
-        packed_state = {(id(k) if isinstance(k, torch.Tensor) else k): v
+        packed_state = {(id(k) if isinstance(k, Variable) else k): v
                         for k, v in self.state.items()}
         return {
             'state': packed_state,
@@ -86,7 +82,7 @@ class Optimizer(object):
         }
 
     def load_state_dict(self, state_dict):
-        r"""Loads the optimizer state.
+        """Loads the optimizer state.
 
         Arguments:
             state_dict (dict): optimizer state. Should be an object returned
@@ -113,13 +109,13 @@ class Optimizer(object):
                       chain(*(g['params'] for g in groups)))}
 
         def cast(param, value):
-            r"""Make a deep copy of value, casting all tensors to device of param."""
-            if isinstance(value, torch.Tensor):
+            """Make a deep copy of value, casting all tensors to device of param."""
+            if torch.is_tensor(value):
                 # Floating-point types are a bit special here. They are the only ones
                 # that are assumed to always match the type of params.
                 if param.is_floating_point():
-                    value = value.to(param.dtype)
-                value = value.to(param.device)
+                    value = value.type_as(param)
+                value = value.cuda(param.get_device()) if param.is_cuda else value.cpu()
                 return value
             elif isinstance(value, dict):
                 return {k: cast(param, v) for k, v in value.items()}
@@ -148,7 +144,7 @@ class Optimizer(object):
         self.__setstate__({'state': state, 'param_groups': param_groups})
 
     def zero_grad(self):
-        r"""Clears the gradients of all optimized :class:`torch.Tensor` s."""
+        """Clears the gradients of all optimized :class:`Variable` s."""
         for group in self.param_groups:
             for p in group['params']:
                 if p.grad is not None:
@@ -156,7 +152,7 @@ class Optimizer(object):
                     p.grad.zero_()
 
     def step(self, closure):
-        r"""Performs a single optimization step (parameter update).
+        """Performs a single optimization step (parameter update).
 
         Arguments:
             closure (callable): A closure that reevaluates the model and
@@ -165,34 +161,31 @@ class Optimizer(object):
         raise NotImplementedError
 
     def add_param_group(self, param_group):
-        r"""Add a param group to the :class:`Optimizer` s `param_groups`.
+        """Add a param group to the :class:`Optimizer` s `param_groups`.
 
         This can be useful when fine tuning a pre-trained network as frozen layers can be made
         trainable and added to the :class:`Optimizer` as training progresses.
 
         Arguments:
-            param_group (dict): Specifies what Tensors should be optimized along with group
+            param_group (dict): Specifies what Variables should be optimized along with group
             specific optimization options.
         """
         assert isinstance(param_group, dict), "param group must be a dict"
 
         params = param_group['params']
-        if isinstance(params, torch.Tensor):
+        if isinstance(params, Variable):
             param_group['params'] = [params]
-        elif isinstance(params, set):
-            raise TypeError('optimizer parameters need to be organized in ordered collections, but '
-                            'the ordering of tensors in sets will change between runs. Please use a list instead.')
         else:
             param_group['params'] = list(params)
 
         for param in param_group['params']:
-            if not isinstance(param, torch.Tensor):
-                raise TypeError("optimizer can only optimize Tensors, "
+            if not isinstance(param, Variable):
+                raise TypeError("optimizer can only optimize Variables, "
                                 "but one of the params is " + torch.typename(param))
             if not param.requires_grad:
                 raise ValueError("optimizing a parameter that doesn't require gradients")
             if not param.is_leaf:
-                raise ValueError("can't optimize a non-leaf Tensor")
+                raise ValueError("can't optimize a non-leaf Variable")
 
         for name, default in self.defaults.items():
             if default is required and name not in param_group:

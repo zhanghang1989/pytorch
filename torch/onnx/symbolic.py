@@ -1,24 +1,14 @@
-import numbers
-
 import torch
 from torch.nn.modules.utils import _single, _pair, _triple
 from torch.nn.utils.rnn import PackedSequence
 import warnings
 
 import torch.onnx
-# This import monkey-patches graph manipulation methods on Graph, used for the
-# ONNX symbolics
-import torch.onnx.utils
 
-from collections import Iterable
 from functools import partial
-import itertools
 
 # EDITING THIS FILE? READ THIS FIRST!
 #
-# - This file is ONLY for ATen operators (e.g., operators that show up in the
-#   trace as aten::blah).  If you need to special case a primitive operator,
-#   look at _run_symbolic_function
 # - Parameter ordering does NOT necessarily match what is in VariableType.cpp;
 #   tensors are always first, then non-tensor arguments.
 # - Parameter names must *exactly* match the names in VariableType.cpp, because
@@ -86,7 +76,7 @@ def _unimplemented(op, msg):
 # increasing this number.  This includes symbolic definitions NOT in this
 # file, so grep for "OpName" (with quotes)
 
-_onnx_opset_version = 6
+_onnx_opset_version = 2
 
 
 # ---------------------------------------------------------------------
@@ -128,7 +118,11 @@ _onnx_opset_version = 6
 
 # used to represent "missing" optional inputs
 def unused(g):
-    return g.op("prim::Undefined")
+    return g.op("Undefined")
+
+
+def Constant(g, value):
+    return g.op("Constant", value_t=value)
 
 
 def add(g, self, other, alpha):
@@ -212,13 +206,7 @@ def sum(g, self, dim=None, keepdim=None):
         return g.op("Sum", self)
     if keepdim is None:
         keepdim = 0
-    if isinstance(dim, numbers.Number):
-        dim = [dim]
-    return g.op("ReduceSum", self, axes_i=dim, keepdims_i=keepdim)
-
-
-def cumsum(g, input, dim):
-    return g.op("ATen", input, operator_s="cumsum", dim_i=dim)
+    return g.op("ReduceSum", self, axes_i=[dim], keepdims_i=keepdim)
 
 
 def prod(g, self, dim=None, keepdim=None):
@@ -235,31 +223,13 @@ def t(g, self):
     return g.op("Transpose", self, perm_i=(1, 0))
 
 
-# There is no translation for it, but we don't want to raise an error yet
 def expand(g, self, size):
-    return None
+    # TODO: This is not a real ONNX operator at the moment
+    return g.op("Expand", self, shape_i=size)
 
 
 def embedding(g, weight, indices, padding_idx, scale_grad_by_freq, sparse):
     return g.op("Gather", weight, indices)
-
-
-def embedding_bag(g,
-                  embedding_matrix,
-                  indices,
-                  offsets,
-                  scale_grad_by_freq,
-                  mode,
-                  sparse):
-    return g.op("ATen",
-                embedding_matrix,
-                indices,
-                offsets,
-                operator_s="embedding_bag",
-                outputs=3,
-                scale_grad_by_freq_i=scale_grad_by_freq,
-                mode_i=mode,
-                sparse_i=sparse)
 
 
 def transpose(g, self, dim0, dim1):
@@ -279,12 +249,9 @@ def permute(g, self, dims):
 
 
 def view(g, self, size):
-    if self.isTensor():
-        self_sizes = self.type().sizes()
-        if self_sizes and len(size) == 2 and self_sizes[0] == size[0]:
-            return g.op("Flatten", self, axis_i=1)
-    shape = g.op("Constant", value_t=torch.LongTensor(size))
-    return g.op("Reshape", self, shape)
+    if self.type().sizes()[0] == size[0] and len(size) == 2:
+        return g.op("Flatten", self, axis_i=1)
+    return g.op("Reshape", self, shape_i=size)
 
 
 def split(g, self, split_size, dim):
@@ -368,8 +335,6 @@ def softmax(g, input, dim=None):
     #           [0.167, 0.167, 0.167]]
     # So only when dim and axis both equal to ndim - 1 (the last dimension),
     # their semantics are equivalent.
-    if dim < 0:
-        dim = len(input.type().sizes()) + dim
     if len(input.type().sizes()) != dim + 1:
         return _unimplemented("dim", "ONNX and PyTorch use different strategies to split the input.")
     return g.op('Softmax', input, axis_i=dim)
@@ -409,20 +374,6 @@ def max_pool2d(g, input, kernel_size, stride, padding, dilation, ceil_mode):
     return r, None
 
 
-def max_pool3d(g, input, kernel_size, stride, padding, dilation, ceil_mode):
-    if ceil_mode:
-        return _unimplemented("max_pool3d", "ceil_mode")
-    if set(_triple(dilation)) != {1}:
-        return _unimplemented("max_pool3d", "dilation")
-    if not stride:
-        stride = kernel_size
-    r = g.op("MaxPool", input,
-             kernel_shape_i=_triple(kernel_size),
-             pads_i=_triple(padding) * 2,
-             strides_i=_triple(stride))
-    return r, None
-
-
 def avg_pool2d(g, input, kernel_size, stride, padding, ceil_mode, count_include_pad):
     if ceil_mode:
         return _unimplemented("avg_pool2d", "ceil_mode")
@@ -444,7 +395,7 @@ def avg_pool3d(g, input, kernel_size, stride, padding, ceil_mode, count_include_
     return g.op("AveragePool", input,
                 kernel_shape_i=_triple(kernel_size),
                 strides_i=_triple(stride),
-                pads_i=_triple(padding) * 2)
+                pads_i=_triple(padding))
 
 
 def reflection_pad(g, input, padding):
@@ -474,21 +425,6 @@ def upsample_nearest2d(g, input, scale_factor):
                 height_scale_f=scale_factor, mode_s="nearest")
 
 
-def upsample_bilinear2d(g, input, output_size):
-    w_scale = float(output_size[-1]) / input.type().sizes()[-1]
-    h_scale = float(output_size[-2]) / input.type().sizes()[-2]
-    return g.op("Upsample", input, width_scale_f=w_scale,
-                height_scale_f=h_scale, mode_s="bilinear")
-
-
-def gt(g, input, other):
-    return g.op("Greater", input, _if_scalar_type_as(other, input), **_broadcast_if_scalar(other))
-
-
-def lt(g, input, other):
-    return g.op("Less", input, _if_scalar_type_as(other, input), **_broadcast_if_scalar(other))
-
-
 def log_softmax(g, input, dim=None):
     return g.op("LogSoftmax", input, axis_i=dim)
 
@@ -499,7 +435,7 @@ def _convolution(g, input, weight, bias, stride, padding, dilation,
 
     args = [input, weight]
     # ONNX only supports 1D bias
-    if bias.node().kind() != "prim::Undefined" and len(bias.type().sizes()) == 1:
+    if bias.node().kind() != "Undefined" and len(bias.type().sizes()) == 1:
         args.append(bias)
 
     kwargs = {"kernel_shape_i": weight_size[2:],
@@ -520,26 +456,20 @@ def _convolution(g, input, weight, bias, stride, padding, dilation,
 
     n = g.op("ConvTranspose" if transposed else "Conv", *args, **kwargs)
 
-    if bias.node().kind() != "prim::Undefined" and len(bias.type().sizes()) != 1:
+    if bias.node().kind() != "Undefined" and len(bias.type().sizes()) != 1:
         return g.op("Add", n, bias, broadcast_i=1, axis_i=1)
     else:
         return n
 
 
 def batch_norm(g, input, weight, bias, running_mean, running_var, training, momentum, eps, cudnn_enabled):
-    input_sizes = input.type().sizes()
-    if len(input_sizes) == 2:
-        # batchnorm1d accepts 2d and 3d array, but ONNX only accepts 3d
-        input = g.op("Unsqueeze", input, axes_i=[2])
-
     out = g.op("BatchNormalization", input, weight, bias, running_mean, running_var,
                is_test_i=not training,
                epsilon_f=eps,
                momentum_f=1 - momentum,
+               consumed_inputs_i=(0, 0, 0, 1, 1),
                outputs=1 if not training else 5)
     if not training:
-        if len(input_sizes) == 2:
-            out = g.op("Squeeze", out, axes_i=[2])
         return out
     else:
         res, new_running_mean, new_running_var, saved_mean, saved_var = out
@@ -547,8 +477,6 @@ def batch_norm(g, input, weight, bias, running_mean, running_var, training, mome
         new_running_var.setType(running_var.type())
         saved_mean.setUniqueName("batch_norm_dead_output-" + saved_mean.uniqueName())
         saved_var.setUniqueName("batch_norm_dead_output-" + saved_var.uniqueName())
-        if len(input_sizes) == 2:
-            res = g.op("Squeeze", res, axes_i=[2])
         return res
 
 
@@ -556,9 +484,7 @@ def unfold(g, input, dimension, size, step):
     return g.op("ATen", input, operator_s="unfold", dimension_i=dimension, size_i=size, step_i=step)
 
 
-def elu(g, input, alpha, scale):
-    if scale and scale != 1.:
-        return _unimplemented("scale", "does not support scale in Elu")
+def elu(g, input, alpha, inplace=False):
     # See Note [Export inplace]
     return g.op("Elu", input, alpha_f=_scalar(alpha))
 
@@ -597,42 +523,12 @@ def clamp(g, self, min, max):
     return g.op("Clip", self, min_f=min, max_f=max)
 
 
-# torch.max (same for torch.min) actually has two interfaces smashed together:
-# torch.max(x, dim, keepdim) and torch.max(x, y)
-def max(g, self, *args, **kwargs):
-    dim = kwargs.get("dim", None)
-    if dim is None and isinstance(args[0], numbers.Number):
-        dim = args[0]
-    if dim is not None:
-        keepdim = kwargs.get("keepdim", False)
-        # TODO: export it as ReduceMax
-        return g.op("ATen",
-                    self,
-                    operator_s="max",
-                    dim_i=dim,
-                    keepdim_i=keepdim,
-                    outputs=2)
-    else:
-        (other,) = args
-        return g.op("Max", self, other)
+def max(g, self, other):
+    return g.op("Max", self, other)
 
 
-def min(g, self, *args, **kwargs):
-    dim = kwargs.get("dim", None)
-    if dim is None and isinstance(args[0], numbers.Number):
-        dim = args[0]
-    if dim is not None:
-        keepdim = kwargs.get("keepdim", False)
-        # TODO: export it as ReduceMin
-        return g.op("ATen",
-                    self,
-                    operator_s="min",
-                    dim_i=dim,
-                    keepdim_i=keepdim,
-                    outputs=2)
-    else:
-        (other,) = args
-        return g.op("Min", self, other)
+def min(g, self, other):
+    return g.op("Min", self, other)
 
 
 def eq(g, self, other):
@@ -647,11 +543,6 @@ def conv_tbc(g, input, weight, bias, pad):
     return g.op("ATen", input, weight, bias, operator_s="conv_tbc", pad_i=pad)
 
 
-def _unique(g, input, sorted, return_inverse):
-    return g.op("ATen", input, operator_s="_unique", sorted_i=sorted,
-                return_inverse_i=return_inverse, outputs=2)
-
-
 # Metaprogram symbolics for each ATen native specialized cast operator.
 # For e.g. we specify a function named `_cast_uint8_t` that instantiates an
 # ONNX cast node with `to` attribute 'UINT8'
@@ -659,19 +550,19 @@ def _unique(g, input, sorted, return_inverse):
 # TODO: remove these once we support Type's in the JIT IR and we can once again
 # use the unified toType operator
 cast_pytorch_to_onnx = {
-    'uint8_t': torch.onnx.TensorProtoDataType.UINT8,
-    'int8_t': torch.onnx.TensorProtoDataType.INT8,
-    'double': torch.onnx.TensorProtoDataType.DOUBLE,
-    'float': torch.onnx.TensorProtoDataType.FLOAT,
-    'Half': torch.onnx.TensorProtoDataType.FLOAT16,
-    'int': torch.onnx.TensorProtoDataType.INT32,
-    'int64_t': torch.onnx.TensorProtoDataType.INT64,
-    'int16_t': torch.onnx.TensorProtoDataType.INT16,
+    'uint8_t': 'UINT8',
+    'int8_t': 'INT8',
+    'double': 'DOUBLE',
+    'float': 'FLOAT',
+    'Half': 'FLOAT16',
+    'int': 'INT32',
+    'int64_t': 'INT64',
+    'int16_t': 'INT16',
 }
 
 
-def _cast_func_template(to_i, g, input, non_blocking):
-    return g.op("Cast", input, to_i=to_i)
+def _cast_func_template(to_s, g, input, non_blocking):
+    return g.op("Cast", input, to_s=to_s)
 
 
 for k, v in cast_pytorch_to_onnx.items():
@@ -702,25 +593,16 @@ def topk(g, self, k, dim=None, largest=True, sorted=True, out=None):
     return g.op("TopK", self, k_i=k, axis_i=dim, outputs=2)
 
 
-def repeat(g, self, repeats):
-    if self.isTensor():
-        sizes = self.type().sizes()
-        diff_dims = len(repeats) - len(sizes)
-        if diff_dims > 0:
-            self = view(g, self, [1] * diff_dims + sizes)
-    return g.op("Tile", self, g.op("Constant", value_t=torch.LongTensor(repeats)))
-
-
 def instance_norm(g, input, **kwargs):
     input_type = input.type().scalarType()
     weight = kwargs.get("weight", None)
     bias = kwargs.get("bias", None)
     eps = kwargs.get("eps", 1e-5)
-    if weight is None:
+    if not weight:
         weight = g.constant(1.0, [input.type().sizes()[1]], input_type)
     else:
         weight = g.op('Constant', value_t=weight)
-    if bias is None:
+    if not bias:
         bias = g.constant(0.0, [input.type().sizes()[1]], input_type)
     else:
         bias = g.op('Constant', value_t=bias)
@@ -894,113 +776,3 @@ def GRU_symbolic_builder(input_size, hidden_size, num_layers, batch_first, dropo
         return prev_output, h_outs
 
     return symbolic
-
-
-# WARNING: Here be dragons. i.e. this is a hack that should die in a fire
-#
-# Since we need RNN nodes to work both in the GraphExecutor as well as call the
-# correct symbolic function during ONNX export, we do the following:
-#
-# 1. During tracing we dispatch to this function
-# 2. This function emits a PythonOp wrapping the RNN function that would have
-#    run had we not been tracing. Thus, GraphExecutor will call the RNN operator
-#    via Python. In the future we will likely want to make the RNN modules into
-#    ScriptModules so we can optimize them.
-# 3. We store a wrapper around the ONNX symbolic function in the `symbolic`
-#    attribute of the Python function. The ONNX export pass accesses this
-#    attribute during tracing and calls it to lower the PythonOp into the right
-#    thing
-#
-# The first three parameters to this function are meant to be bound with:
-#   cell_type - The string description of the type of RNN cell. e.g. 'LSTM'
-#   func - The function that would have been called here if we had not been
-#          tracing, e.g. CudnnRNN or AutogradRNN.
-#   sym - The ONNX symbolic we should store in the PythonOp for later export.
-#
-# With those three parameters bound, we can pass the function into the
-# torch.onnx.symbolic_override* functions
-#
-# The remaining arguments are equivalent to the inputs seen when dispatching
-# a symbolic function for an operator. Concretely:
-#  * input - a single input tensor [seq_len, batch, input_size] or if bach_first=True,
-#            [batch, seq_len, input_size]
-#  * weights - list of list of tensors. len(weights) = number of layers
-#              weights[i] is a list of weights, same as the parameters to
-#              torch.nn.{RNN,LSTM,GRU}. See the symbolic builders above
-#  * hiddens - hidden state for the first layer, or {hidden state, cell state} if
-#              cell_type == LSTM
-#  * batch_sizes - 1-D tensor containing the sequence length for each example
-#                  in the batch.
-def rnn_trace_override_symbolic(cell_type, func, sym, g, input, weights, hiddens, batch_sizes):
-    num_layers = len(weights)
-    num_weights = 0
-    for x in weights:
-        num_weights += len(x)
-    weights_per_layer = num_weights // num_layers
-    has_batch_sizes = batch_sizes is not None
-
-    # Since we need flat argument lists in the IR, these two functions and the
-    # supporting code before the `wrapPyFuncWithSymbolic` call are simply
-    # helpers to reconstruct the input, weights, hiddens, and batch_sizes
-    # inputs from the flat argument list. To do this, the above code captures
-    # then lengths of each of these inputs so that we can rematerialize them
-    # later before calling either the RNN function or the ONNX symbolic function
-
-    def forward_flattened_wrapper(input, *args):
-        args_offset = 0
-        weights = []
-        for _ in range(num_layers):
-            weights.append(args[args_offset:args_offset + weights_per_layer])
-            args_offset += weights_per_layer
-        if has_batch_sizes:
-            hiddens = args[args_offset:-1]
-            batch_sizes = args[-1]
-        else:
-            hiddens = args[args_offset:]
-            batch_sizes = None
-        if cell_type != 'LSTM':
-            assert len(hiddens) == 1
-            hiddens = hiddens[0]
-        outputs = func(input, weights, hiddens, batch_sizes)
-        # We also need a flattened output list
-        outs_flattened = [outputs[0]]
-        if cell_type == 'LSTM':
-            for o in outputs[1]:
-                outs_flattened.append(o)
-        else:
-            outs_flattened.append(outputs[1])
-        return tuple(outs_flattened)
-
-    def symbolic_flattened_wrapper(g, input, *args):
-        args_offset = 0
-        weights = []
-        for _ in range(num_layers):
-            weights.append(args[args_offset:args_offset + weights_per_layer])
-            args_offset += weights_per_layer
-        if has_batch_sizes:
-            hiddens = args[args_offset:-1]
-            batch_sizes = args[-1]
-        else:
-            hiddens = args[args_offset:]
-            batch_sizes = None
-        if cell_type != 'LSTM':
-            assert len(hiddens) == 1
-            hiddens = hiddens[0]
-        return sym(g, input, weights, hiddens, batch_sizes)
-
-    flattened_weights = []
-    for x in weights:
-        for y in x:
-            flattened_weights.append(y)
-    if not isinstance(hiddens, Iterable):
-        hiddens = [hiddens]
-    inputs = list(itertools.chain.from_iterable(
-        [[input], flattened_weights, hiddens,
-            [batch_sizes] if batch_sizes else []]))
-    outputs = g.wrapPyFuncWithSymbolic(
-        forward_flattened_wrapper,
-        inputs,
-        3 if cell_type == 'LSTM' else 2,
-        symbolic_flattened_wrapper
-    )
-    return tuple(o for o in outputs)

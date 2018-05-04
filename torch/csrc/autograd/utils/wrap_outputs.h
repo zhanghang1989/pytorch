@@ -3,11 +3,10 @@
 // Wrap tensor operation outputs as PyObject*
 
 #include <ATen/ATen.h>
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <tuple>
 
 #include "torch/csrc/Dtype.h"
-#include "torch/csrc/Layout.h"
 #include "torch/csrc/autograd/python_variable.h"
 #include "torch/csrc/autograd/variable.h"
 #include "torch/csrc/utils/python_numbers.h"
@@ -92,11 +91,6 @@ inline PyObject* wrap(at::Scalar scalar) {
 inline PyObject* wrap(THPDtype *dtype) {
   Py_INCREF(dtype);
   return (PyObject*)dtype;
-}
-
-inline PyObject* wrap(THPLayout *layout) {
-  Py_INCREF(layout);
-  return (PyObject*)layout;
 }
 
 }}} // namespace torch::autograd::utils

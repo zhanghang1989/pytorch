@@ -48,15 +48,16 @@ struct TracingState : public std::enable_shared_from_this<TracingState> {
   size_t num_stages;
   std::atomic<size_t> eval_count;
 
+  // void* is an unsafe TH.  NON-OWNING, so it might get invalidated.
+  // TODO: Perhaps, turn this into an owning reference.  The buffers
+  // are persistent, so this won't lead to a leak.
+  std::unordered_map<void*, Value*> buffer_map;
   // A pair of (input_flags, output_flags) for each stage
   io_variable_flags_list var_flags;
   std::vector<edge_list> output_edges;
 
   std::mutex mutex;
   variable_list inputs; // Used only for the duration of first stage
-
-  bool creates_handles; // should python ops ever get handles? Or should
-                        // we just record them as is.
 
   std::unique_lock<std::mutex> lock() {
     return std::unique_lock<std::mutex>(mutex);

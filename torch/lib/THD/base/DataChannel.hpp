@@ -5,6 +5,7 @@
 #include "DataChannel.h"
 #include "Scalar.hpp"
 #include "init_methods/InitMethod.hpp"
+#include "../master_worker/common/RPCType.hpp"
 
 #include <ATen/ATen.h>
 

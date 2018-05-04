@@ -1,7 +1,6 @@
 import sys
 import os
 import re
-import inspect
 import argparse
 import unittest
 import warnings
@@ -17,9 +16,9 @@ import errno
 
 import torch
 import torch.cuda
+from torch.autograd import Variable
 from torch._six import string_classes
 import torch.backends.cudnn
-import torch.backends.mkl
 
 
 torch.set_default_tensor_type('torch.DoubleTensor')
@@ -40,7 +39,6 @@ def run_tests():
     unittest.main(argv=UNITTEST_ARGS)
 
 PY3 = sys.version_info > (3, 0)
-PY34 = sys.version_info >= (3, 4)
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -55,8 +53,6 @@ try:
     import scipy
 except ImportError:
     TEST_SCIPY = False
-
-TEST_MKL = torch.backends.mkl.is_available()
 
 
 def skipIfNoLapack(fn):
@@ -109,10 +105,6 @@ def to_gpu(obj, type_map={}):
         return tuple(to_gpu(o, type_map) for o in obj)
     else:
         return deepcopy(obj)
-
-
-def get_function_arglist(func):
-    return inspect.getargspec(func).args
 
 
 def set_rng_seed(seed):
@@ -185,7 +177,7 @@ class TestCase(unittest.TestCase):
             if idx_tup in value_map:
                 value_map[idx_tup] += val
             else:
-                value_map[idx_tup] = val.clone() if isinstance(val, torch.Tensor) else val
+                value_map[idx_tup] = val.clone() if torch.is_tensor(val) else val
 
         new_indices = sorted(list(value_map.keys()))
         new_values = [value_map[idx] for idx in new_indices]
@@ -206,6 +198,13 @@ class TestCase(unittest.TestCase):
 
         return tg
 
+    def unwrapVariables(self, x, y):
+        if isinstance(x, Variable):
+            x = x.data
+        if isinstance(y, Variable):
+            y = y.data
+        return x, y
+
     def assertEqual(self, x, y, prec=None, message='', allow_inf=False):
         if isinstance(prec, str) and message == '':
             message = prec
@@ -213,11 +212,13 @@ class TestCase(unittest.TestCase):
         if prec is None:
             prec = self.precision
 
+        x, y = self.unwrapVariables(x, y)
+
         if isinstance(x, torch.Tensor) and isinstance(y, Number):
             self.assertEqual(x.item(), y, prec, message, allow_inf)
         elif isinstance(y, torch.Tensor) and isinstance(x, Number):
             self.assertEqual(x, y.item(), prec, message, allow_inf)
-        elif isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
+        elif torch.is_tensor(x) and torch.is_tensor(y):
             def assertTensorsEqual(a, b):
                 super(TestCase, self).assertEqual(a.size(), b.size(), message)
                 if a.numel() > 0:
@@ -275,7 +276,9 @@ class TestCase(unittest.TestCase):
         if prec is None:
             prec = self.precision
 
-        if isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
+        x, y = self.unwrapVariables(x, y)
+
+        if torch.is_tensor(x) and torch.is_tensor(y):
             if x.size() != y.size():
                 super(TestCase, self).assertNotEqual(x.size(), y.size())
             self.assertGreater(x.numel(), 0)
@@ -323,29 +326,8 @@ class TestCase(unittest.TestCase):
         # Don't put this in the try block; the AssertionError will catch it
         self.fail(msg="Did not raise when expected to")
 
-    def assertWarns(self, callable, msg=''):
-        r"""
-        Test if :attr:`callable` raises a warning.
-        """
-        with warnings.catch_warnings(record=True) as ws:
-            warnings.simplefilter("always")  # allow any warning to be raised
-            callable()
-            self.assertTrue(len(ws) > 0, msg)
-
-    def assertWarnsRegex(self, callable, regex, msg=''):
-        r"""
-        Test if :attr:`callable` raises any warning with message that contains
-        the regex pattern :attr:`regex`.
-        """
-        with warnings.catch_warnings(record=True) as ws:
-            warnings.simplefilter("always")  # allow any warning to be raised
-            callable()
-            self.assertTrue(len(ws) > 0, msg)
-            found = any(re.search(regex, str(w.message)) is not None for w in ws)
-            self.assertTrue(found, msg)
-
     def assertExpected(self, s, subname=None):
-        r"""
+        """
         Test that a string matches the recorded contents of a file
         derived from the name of this test and subname.  This file
         is placed in the 'expect' directory in the same directory
@@ -414,9 +396,9 @@ class TestCase(unittest.TestCase):
                 self.assertEqual(s, expected)
 
     if sys.version_info < (3, 2):
-        # assertRegexpMatches renamed to assertRegex in 3.2
+        # assertRegexpMatches renamed assertRegex in 3.2
         assertRegex = unittest.TestCase.assertRegexpMatches
-        # assertRaisesRegexp renamed to assertRaisesRegex in 3.2
+        # assertRaisesRegexp renamed assertRaisesRegex in 3.2
         assertRaisesRegex = unittest.TestCase.assertRaisesRegexp
 
 

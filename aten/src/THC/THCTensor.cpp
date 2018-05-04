@@ -1,8 +1,7 @@
 #include "THCGeneral.h"
-#include "THCTensor.hpp"
+#include "THCTensor.h"
 #include "THCTensorCopy.h"
+#include "THAtomic.h"
 
-#include <new>
-
-#include "generic/THCTensor.cpp"
+#include "generic/THCTensor.c"
 #include "THCGenerateAllTypes.h"

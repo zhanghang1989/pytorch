@@ -1,3 +1,4 @@
+
 CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
 SET(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
 
@@ -7,97 +8,44 @@ IF(POLICY CMP0026)
 ENDIF()
 
 IF(MSVC AND NOT "${CMAKE_BUILD_TYPE}" MATCHES "Debug")
-  SET(MSVC_OPT_FLAG "/Ox /fp:strict ")
-  SET(VCOMP_LIB "vcomp")
+  SET(MSVC_OPT_FLAG "/Ox ")
 ELSE()
-  SET(MSVC_OPT_FLAG " ")
-  SET(VCOMP_LIB "vcompd")
+  SET(MSVC_OPT_FLAG "")
 ENDIF()
-
-IF(NOT MSVC)
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-ignored-qualifiers")
-  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-ignored-qualifiers")
-ENDIF(NOT MSVC)
 
 ########################
 # SET_SOURCE_FILES_PROPERTIES must be in the same CMakeLists.txt file as the target that includes the file
 # so we need to set these commands here rather than in src/TH
 IF(C_SSE4_1_FOUND AND C_SSE4_2_FOUND)
   IF(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/generic/simd/convolve5x5_sse.cpp PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/fp:fast")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/generic/simd/convolve5x5_sse.c PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/fp:fast")
   ELSE(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/generic/simd/convolve5x5_sse.cpp PROPERTIES COMPILE_FLAGS "-O3 -ffast-math")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/generic/simd/convolve5x5_sse.c PROPERTIES COMPILE_FLAGS "-O3 -ffast-math")
   ENDIF(MSVC)
 ENDIF(C_SSE4_1_FOUND AND C_SSE4_2_FOUND)
 IF(C_AVX_FOUND)
   IF(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/generic/simd/convolve5x5_avx.cpp PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/fp:fast ${CXX_AVX_FLAGS}")
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/vector/AVX.cpp PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/arch:AVX ${CXX_AVX_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/generic/simd/convolve5x5_avx.c PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/fp:fast ${C_AVX_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/vector/AVX.c PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/arch:AVX ${C_AVX_FLAGS}")
   ELSE(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/generic/simd/convolve5x5_avx.cpp PROPERTIES COMPILE_FLAGS "-O3 -ffast-math ${CXX_AVX_FLAGS}")
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/vector/AVX.cpp PROPERTIES COMPILE_FLAGS "-O3 ${CXX_AVX_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/generic/simd/convolve5x5_avx.c PROPERTIES COMPILE_FLAGS "-O3 -ffast-math ${C_AVX_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/vector/AVX.c PROPERTIES COMPILE_FLAGS "-O3 ${C_AVX_FLAGS}")
   ENDIF(MSVC)
 ENDIF(C_AVX_FOUND)
 
 IF(C_AVX2_FOUND)
   IF(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/vector/AVX2.cpp PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/arch:AVX2 ${CXX_AVX2_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/vector/AVX2.cpp PROPERTIES COMPILE_FLAGS "${MSVC_OPT_FLAG}/arch:AVX2 ${C_AVX2_FLAGS}")
   ELSE(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/vector/AVX2.cpp PROPERTIES COMPILE_FLAGS "-O3 ${CXX_AVX2_FLAGS}")
+    SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/vector/AVX2.cpp PROPERTIES COMPILE_FLAGS "-O3 ${C_AVX2_FLAGS}")
   ENDIF(MSVC)
 ENDIF(C_AVX2_FOUND)
 
 IF(NOT MSVC AND NOT "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-  SET_SOURCE_FILES_PROPERTIES(${CMAKE_CURRENT_SOURCE_DIR}/../TH/THAllocator.cpp PROPERTIES COMPILE_FLAGS "-fno-openmp")
+  SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/THAtomic.c PROPERTIES COMPILE_FLAGS "-fno-openmp")
+  SET_SOURCE_FILES_PROPERTIES(${PROJECT_SOURCE_DIR}/src/TH/THAllocator.c PROPERTIES COMPILE_FLAGS "-fno-openmp")
 ENDIF()
-
-FILE(GLOB cpu_kernel_cpp_in RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/cpu/*.cpp")
-
-LIST(APPEND CPU_CAPABILITY_NAMES "DEFAULT")
-IF(MSVC)
-  LIST(APPEND CPU_CAPABILITY_FLAGS "${MSVC_OPT_FLAG}")
-ELSE(MSVC)
-  LIST(APPEND CPU_CAPABILITY_FLAGS "-O3")
-ENDIF(MSVC)
-
-IF(CXX_AVX_FOUND)
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DHAVE_AVX_CPU_DEFINITION")
-  LIST(APPEND CPU_CAPABILITY_NAMES "AVX")
-  IF(MSVC)
-    LIST(APPEND CPU_CAPABILITY_FLAGS "${MSVC_OPT_FLAG}/arch:AVX")
-  ELSE(MSVC)
-    LIST(APPEND CPU_CAPABILITY_FLAGS "-O3 -mavx")
-  ENDIF(MSVC)
-ENDIF(CXX_AVX_FOUND)
-
-IF(CXX_AVX2_FOUND)
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DHAVE_AVX2_CPU_DEFINITION")
-  LIST(APPEND CPU_CAPABILITY_NAMES "AVX2")
-  IF(MSVC)
-    LIST(APPEND CPU_CAPABILITY_FLAGS "${MSVC_OPT_FLAG}/arch:AVX2")
-  ELSE(MSVC)
-    LIST(APPEND CPU_CAPABILITY_FLAGS "-O3 -mavx2")
-  ENDIF(MSVC)
-ENDIF(CXX_AVX2_FOUND)
-
-list(LENGTH CPU_CAPABILITY_NAMES NUM_CPU_CAPABILITY_NAMES)
-math(EXPR NUM_CPU_CAPABILITY_NAMES "${NUM_CPU_CAPABILITY_NAMES}-1")
-
-FOREACH(i RANGE ${NUM_CPU_CAPABILITY_NAMES})
-  FOREACH(IMPL ${cpu_kernel_cpp_in})
-    LIST(GET CPU_CAPABILITY_NAMES ${i} CPU_CAPABILITY)
-    SET(NEW_IMPL ${CMAKE_CURRENT_BINARY_DIR}/${IMPL}.${CPU_CAPABILITY}.cpp)
-    CONFIGURE_FILE(${IMPL} ${NEW_IMPL} COPYONLY)
-    SET(cpu_kernel_cpp ${NEW_IMPL} ${cpu_kernel_cpp}) # Create list of copies
-    LIST(GET CPU_CAPABILITY_FLAGS ${i} FLAGS)
-    IF(MSVC)
-      SET(MACRO_FLAG "/DCPU_CAPABILITY=${CPU_CAPABILITY} /DCPU_CAPABILITY_${CPU_CAPABILITY}")
-    ELSE(MSVC)
-      SET(MACRO_FLAG "-DCPU_CAPABILITY=${CPU_CAPABILITY} -DCPU_CAPABILITY_${CPU_CAPABILITY}")
-    ENDIF(MSVC)
-    SET_SOURCE_FILES_PROPERTIES(${NEW_IMPL} PROPERTIES COMPILE_FLAGS "${FLAGS} ${MACRO_FLAG}")
-  ENDFOREACH()
-ENDFOREACH()
+########################
 
 ################################################################################
 # Helper functions
@@ -128,6 +76,15 @@ function(filter_list output input)
 endfunction()
 
 
+IF ($ENV{TH_BINARY_BUILD})
+  MESSAGE(STATUS "TH_BINARY_BUILD detected. Statically linking libstdc++")
+  SET(CMAKE_CXX_FLAGS "-static-libstdc++ ${CMAKE_CXX_FLAGS}")
+  IF (UNIX AND NOT APPLE)
+    # hiding statically linked library symbols, this flag is not available for the linker under macOS
+    SET(CMAKE_CXX_FLAGS "-Wl,--exclude-libs,libstdc++.a ${CMAKE_CXX_FLAGS}")
+  ENDIF(UNIX AND NOT APPLE)
+ENDIF()
+
 # Can be compiled standalone
 IF(NOT AT_INSTALL_BIN_DIR OR NOT AT_INSTALL_LIB_DIR OR NOT AT_INSTALL_INCLUDE_DIR OR NOT AT_INSTALL_SHARE_DIR)
   SET(AT_INSTALL_BIN_DIR "bin" CACHE PATH "AT install binary subdirectory")
@@ -144,16 +101,12 @@ FILE(GLOB base_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cpp")
 FILE(GLOB native_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/*.cpp")
 FILE(GLOB native_cudnn_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/cudnn/*.cpp")
 FILE(GLOB native_cuda_cu RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/cuda/*.cu")
-FILE(GLOB native_mkl_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/mkl/*.cpp")
-FILE(GLOB native_mkldnn_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "native/mkldnn/*.cpp")
 
 FILE(GLOB_RECURSE cuda_h
      RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
      "cuda/*.cuh" "cuda/*.h" "cudnn/*.cuh" "cudnn/*.h")
 
 FILE(GLOB cudnn_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "cudnn/*.cpp")
-FILE(GLOB mkl_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "mkl/*.cpp")
-FILE(GLOB mkldnn_cpp RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "mkldnn/*.cpp")
 
 FILE(GLOB all_python RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.py")
 
@@ -199,25 +152,19 @@ ADD_CUSTOM_TARGET(aten_files_are_generated
 )
 
 
-SET(all_cpp ${base_cpp} ${native_cpp} ${native_cudnn_cpp} ${native_mkl_cpp} ${native_mkldnn_cpp} ${generated_cpp} ${ATen_CPU_SRCS} ${cpu_kernel_cpp})
+SET(all_cpp ${base_cpp} ${native_cpp} ${native_cudnn_cpp} ${generated_cpp} ${ATen_CPU_SRCS})
 
 INCLUDE_DIRECTORIES(${ATen_CPU_INCLUDE})
 IF(NOT NO_CUDA)
   INCLUDE_DIRECTORIES(${ATen_CUDA_INCLUDE})
+  INCLUDE_DIRECTORIES("${CUDA_SDK_ROOT_DIR}/common/inc")
   INCLUDE_DIRECTORIES("${CMAKE_CURRENT_SOURCE_DIR}/cuda")
   SET(ATen_CUDA_SRCS ${ATen_CUDA_SRCS} ${aten_cuda_cu} ${native_cuda_cu})
   SET(all_cpp ${all_cpp} ${ATen_CUDA_SRCS})
   IF(CUDNN_FOUND)
     SET(all_cpp ${all_cpp} ${cudnn_cpp})
   ENDIF()
-  IF(AT_MKL_ENABLED)
-    SET(all_cpp ${all_cpp} ${mkl_cpp})
-  ENDIF()
 endif()
-
-IF(AT_MKLDNN_ENABLED)
-  SET(all_cpp ${all_cpp} ${mkldnn_cpp})
-ENDIF()
 
 filter_list(generated_h generated_cpp "\\.h$")
 
@@ -234,33 +181,7 @@ ELSE()
 ENDIF()
 ADD_DEPENDENCIES(ATen aten_files_are_generated)
 
-if(NOT MSVC)
-  target_compile_options(ATen
-    PRIVATE
-    -Wall
-    -Wextra
-    -fexceptions
-    -Wno-missing-field-initializers
-    -Wno-type-limits
-    -Wno-unused-parameter
-    -Wno-unknown-warning-option
-    -Wno-unknown-pragmas)
-
-  if ($ENV{WERROR})
-    target_compile_options(ATen PRIVATE -Werror)
-  endif()
-endif()
-
-set(TBB_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/tbb")
-set(TBB_BUILD_STATIC ON CACHE BOOL " " FORCE)
-set(TBB_BUILD_SHARED OFF CACHE BOOL " " FORCE)
-set(TBB_BUILD_TBBMALLOC OFF CACHE BOOL " " FORCE)
-set(TBB_BUILD_TBBMALLOC_PROXY OFF CACHE BOOL " " FORCE)
-set(TBB_BUILD_TESTS OFF CACHE BOOL " " FORCE)
-add_subdirectory(cpu/tbb)
-set_property(TARGET tbb_static tbb_def_files PROPERTY FOLDER "dependencies")
-target_include_directories(tbb_static PUBLIC ${TBB_ROOT_DIR}/include)
-target_link_libraries(ATen tbb_static)
+SET_TARGET_PROPERTIES(ATen PROPERTIES VERSION 1 SOVERSION 1)
 
 if(NOT ${CMAKE_VERSION} VERSION_LESS "3.1")
     SET_PROPERTY(TARGET ATen PROPERTY CXX_STANDARD 11)
@@ -313,12 +234,6 @@ ENDIF(UNIX)
 
 IF(NOT MSVC)
   TARGET_LINK_LIBRARIES(ATen m)
-ELSE(NOT MSVC)
-  IF(AT_MKL_MT)
-    set_target_properties(ATen PROPERTIES LINK_FLAGS_RELEASE "/NODEFAULTLIB:${VCOMP_LIB}")
-    set_target_properties(ATen PROPERTIES LINK_FLAGS_DEBUG "/NODEFAULTLIB:${VCOMP_LIB}")
-    set_target_properties(ATen PROPERTIES STATIC_LIBRARY_FLAGS "/NODEFAULTLIB:${VCOMP_LIB}")
-  ENDIF(AT_MKL_MT)
 ENDIF(NOT MSVC)
 
 # Is __thread supported?
@@ -330,99 +245,19 @@ ENDIF(NOT MSVC)
 IF(NOT C_HAS_THREAD)
   MESSAGE(STATUS "Warning: __thread is not supported, generating thread-unsafe code")
 ELSE(NOT C_HAS_THREAD)
-  add_compile_options(-DTH_HAVE_THREAD)
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DTH_HAVE_THREAD")
 ENDIF(NOT C_HAS_THREAD)
 
-if(MKLDNN_FOUND)
-  target_link_libraries(ATen ${MKLDNN_LIBRARIES})
-endif(MKLDNN_FOUND)
-
-# Directory where cpuinfo will download and build all dependencies
-set(CONFU_DEPENDENCIES_BINARY_DIR ${PROJECT_BINARY_DIR}/confu-deps
-  CACHE PATH "Confu-style dependencies binary directory")
-
-# ---[ Configure cpuinfo
-if (NOT TARGET cpuinfo)
-  if (NOT DEFINED CPUINFO_SOURCE_DIR)
-    set(CPUINFO_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/cpuinfo" CACHE STRING "cpuinfo source directory")
-  endif()
-
-  set(CPUINFO_BUILD_TOOLS OFF CACHE BOOL "")
-  set(CPUINFO_BUILD_UNIT_TESTS OFF CACHE BOOL "")
-  set(CPUINFO_BUILD_MOCK_TESTS OFF CACHE BOOL "")
-  set(CPUINFO_BUILD_BENCHMARKS OFF CACHE BOOL "")
-  set(CPUINFO_LIBRARY_TYPE "static" CACHE STRING "")
-  if(MSVC)
-    # ATen is built with default MSVC runtime linking, which is /MD (DLL)
-    # so no need to check *_USE_MSVC_STATIC_RUNTIME or some equivalent.
-    set(CPUINFO_RUNTIME_TYPE "shared" CACHE STRING "")
-  endif()
-  add_subdirectory(
-    "${CPUINFO_SOURCE_DIR}"
-    "${CONFU_DEPENDENCIES_BINARY_DIR}/cpuinfo")
-  # We build static version of cpuinfo but link
-  # them into a shared library for Caffe2, so they need PIC.
-  set_property(TARGET cpuinfo PROPERTY POSITION_INDEPENDENT_CODE ON)
-endif()
-TARGET_LINK_LIBRARIES(ATen cpuinfo)
-
-# ---[ Configure SLEEF
-IF(NOT TARGET sleef)
-  add_subdirectory("cpu/sleef")
-  include_directories(SYSTEM ${CMAKE_BINARY_DIR}/include)
-ENDIF()
-TARGET_LINK_LIBRARIES(ATen sleef)
+if (NNPACK_FOUND)
+  target_link_libraries(ATen ${NNPACK_LIBRARIES})
+endif(NNPACK_FOUND)
 
 IF(CUDA_FOUND)
-  IF ($ENV{ATEN_STATIC_CUDA})
-    # CuFFT has a complicated static story (especially around CUDA < 9) because it has device callback support
-    # we first have to build a fake lib that links with no device callbacks,
-    # and then we link against this object file.
-    # This was recommended by the CuFFT team at NVIDIA
-
-    # build fake CuFFT lib in build dir
-    EXECUTE_PROCESS(COMMAND touch ${CMAKE_CURRENT_BINARY_DIR}/empty_file.cc)
-    if(${CUDA_VERSION_MAJOR} EQUAL "8")
-      SET(CUFFT_FAKELINK_OPTIONS
-	--generate-code arch=compute_35,code=sm_35
-	--generate-code arch=compute_50,code=sm_50
-	--generate-code arch=compute_60,code=sm_60)
-    elseif(${CUDA_VERSION_MAJOR} EQUAL "9")
-      SET(CUFFT_FAKELINK_OPTIONS
-	--generate-code arch=compute_35,code=sm_35
-	--generate-code arch=compute_50,code=sm_50
-	--generate-code arch=compute_60,code=sm_60
-	--generate-code arch=compute_70,code=sm_70)
-    else()
-      MESSAGE(FATAL_ERROR "Unhandled major cuda version ${CUDA_VERSION_MAJOR}")
-    endif()
-    ADD_CUSTOM_COMMAND(
-      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cufft_static_library.a
-      COMMAND "${CUDA_TOOLKIT_ROOT_DIR}/bin/nvcc" -o ${CMAKE_CURRENT_BINARY_DIR}/cufft_static_library.a -Xcompiler -fPIC
-      ${CUFFT_FAKELINK_OPTIONS}
-      --device-link ${CMAKE_CURRENT_BINARY_DIR}/empty_file.cc -lcufft_static -lculibos
-      )
-    ADD_CUSTOM_TARGET(FAKELINKED_CUFFT_TARGET DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cufft_static_library.a)
-    add_library(FAKELINKED_CUFFT STATIC IMPORTED GLOBAL)
-    add_dependencies(FAKELINKED_CUFFT FAKELINKED_CUFFT_TARGET)
-    set_target_properties(FAKELINKED_CUFFT PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/cufft_static_library.a)
-
-    TARGET_LINK_LIBRARIES(ATen
-      ${CUDA_LIBRARIES}
-      ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcusparse_static.a
-      ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcurand_static.a
-      ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcublas_static.a
-      FAKELINKED_CUFFT
-      ${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcufft_static.a
-      )
-  ELSE()
-    TARGET_LINK_LIBRARIES(ATen
-      ${CUDA_LIBRARIES}
-      ${CUDA_cusparse_LIBRARY}
-      ${CUDA_curand_LIBRARY})
-    CUDA_ADD_CUBLAS_TO_TARGET(ATen)
-    CUDA_ADD_CUFFT_TO_TARGET(ATen)
-  ENDIF()
+  TARGET_LINK_LIBRARIES(ATen
+    ${CUDA_LIBRARIES}
+    ${CUDA_cusparse_LIBRARY}
+    ${CUDA_curand_LIBRARY})
+  CUDA_ADD_CUBLAS_TO_TARGET(ATen)
 
   if(CUDNN_FOUND)
     target_link_libraries(ATen ${CUDNN_LIBRARIES})
@@ -431,12 +266,21 @@ IF(CUDA_FOUND)
   IF(USE_MAGMA)
     TARGET_LINK_LIBRARIES(ATen ${MAGMA_LIBRARIES})
     IF ($ENV{TH_BINARY_BUILD})
-      TARGET_LINK_LIBRARIES(ATen "${BLAS_LIBRARIES};${BLAS_LIBRARIES};${BLAS_LIBRARIES}")
+      # because magma is linked statically and it wants a BLAS,
+      # we need to link the BLAS lib against THC. Usually TH will
+      # load a BLAS library and it's all fine, but in the binary builds,
+      # TH uses static linkage to MKL, so it doesn't have all symbols that
+      # magma needs. So in this case, explicitly find a BLAS and link against it
+      # just like in TH
+      SET(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../TH/cmake ${CMAKE_MODULE_PATH})
+      FIND_PACKAGE(BLAS)
+      IF(BLAS_FOUND)
+        TARGET_LINK_LIBRARIES(ATen "${BLAS_LIBRARIES};${BLAS_LIBRARIES};${BLAS_LIBRARIES}")
+      ELSE(BLAS_FOUND)
+        MESSAGE(FATAL_ERROR "Binary build needs blas to be found here")
+      ENDIF(BLAS_FOUND)
     ENDIF($ENV{TH_BINARY_BUILD})
   ENDIF(USE_MAGMA)
-  IF ($ENV{ATEN_STATIC_CUDA})
-    TARGET_LINK_LIBRARIES(ATen "${CUDA_TOOLKIT_ROOT_DIR}/lib64/libculibos.a")
-  ENDIF($ENV{ATEN_STATIC_CUDA})
 ENDIF()
 
 INSTALL(TARGETS ATen

@@ -6,7 +6,6 @@
 #include "torch/csrc/Exceptions.h"
 #include "torch/csrc/Size.h"
 #include "torch/csrc/autograd/python_variable.h"
-#include "torch/csrc/autograd/utils/python_error_messages.h"
 #include "torch/csrc/autograd/utils/wrap_outputs.h"
 #ifdef WITH_CUDA
 #include "torch/csrc/cuda/Stream.h"
@@ -18,7 +17,6 @@
 #include "torch/csrc/utils/python_strings.h"
 #include "torch/csrc/utils/python_tuples.h"
 #include "torch/csrc/utils/tensor_apply.h"
-#include "torch/csrc/utils/tensor_conversion_dispatch.h"
 #include "torch/csrc/utils/tensor_list.h"
 #include "torch/csrc/utils/tensor_new.h"
 #include "torch/csrc/utils/tensor_numpy.h"
@@ -299,13 +297,51 @@ static PyObject * THPVariable_invert(PyObject* self, PyObject* args) {
   END_HANDLE_TH_ERRORS
 }
 
+static Tensor dispatch_type(const Tensor & self, const at::Type & type, int device, bool non_blocking) {
+  if (type.is_cuda()) {
+    torch::utils::cuda_lazy_init();
+  }
+  AutoNoGIL no_gil;
+  AutoGPU auto_gpu(device);
+  int64_t tensor_device = self.is_cuda() ? self.get_device() : -1;
+  if (self.is_cuda() && type.is_cuda() && tensor_device != at::current_device()) {
+    // copy if the devices are different even if the types are the same
+    return type.copy(self, non_blocking);
+  }
+
+  // Don't specialize cross-backend copies
+  if (self.type().backend() != type.backend()) {
+    return self.toType(type, non_blocking);
+  }
+
+  // Dispatch to specialized, traceable cast operators for the JIT. These
+  // specialized ops are ATen native and thus have the tracing mechanisms auto-
+  // generated, whereas the default case is not traceable since it requires a
+  // Type as a parameter/attribute. TODO: support Types in the JIT and remove
+  // this once we have that
+  switch (type.scalarType()) {
+#define DEFINE_CAST_DISPATCH(_1, n, _2)   \
+  case ScalarType::n: {                   \
+    return self._cast_##_1(non_blocking); \
+  } break;
+    AT_FORALL_SCALAR_TYPES(DEFINE_CAST_DISPATCH)
+#undef DEFINE_CAST_DISPATCH
+    default: { return self.toType(type, non_blocking); } break;
+  }
+}
+
+static Tensor dispatch_type(const Tensor & self, const at::Type & type) {
+  int64_t device = self.is_cuda() ? self.get_device() : -1;
+  return dispatch_type(self, type, device, false);
+}
+
 static PyObject * THPVariable_cpu(PyObject* self, PyObject* args)
 {
    HANDLE_TH_ERRORS
    auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
    auto backend = self_.is_sparse() ? Backend::SparseCPU : Backend::CPU;
    auto& type = self_.type().toBackend(backend);
-   return wrap(torch::utils::dispatch_type_conversion(self_, type));
+   return wrap(dispatch_type(self_, type));
    END_HANDLE_TH_ERRORS
 }
 
@@ -313,20 +349,16 @@ static PyObject * THPVariable_cuda(PyObject* self, PyObject* args, PyObject* kwa
 {
   HANDLE_TH_ERRORS
   static PythonArgParser parser({
-    "cuda(Device? device=None, bool non_blocking=False)",
-    "cuda(Device? device=None, bool async=False)|deprecated"
+    "cuda(int64_t? device=-1, bool non_blocking=False)",
+    "cuda(int64_t? device=-1, bool async=False)|deprecated"
   });
   auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
   ParsedArgs<2> parsed_args;
   auto r = parser.parse(args, kwargs, parsed_args);
   auto backend = self_.is_sparse() ? at::kSparseCUDA : at::kCUDA;
   auto& type = self_.type().toBackend(backend);
-  auto device_obj = r.device(0);
-  if (!r.isNone(0) && device_obj.type != DeviceType::CUDA) {
-    throw std::runtime_error("Invalid device, must be cuda device");
-  }
-  auto device = (device_obj.is_default || device_obj.type == DeviceType::CPU) ? -1 : device_obj.index;
-  return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type, device, r.toBool(1)));
+  auto device = r.toInt64(0);
+  return THPVariable_Wrap(dispatch_type(self_, type, device, r.toBool(1)));
   END_HANDLE_TH_ERRORS
 }
 
@@ -334,7 +366,7 @@ static PyObject * THPVariable_to_type(PyObject* self, ScalarType scalarType) {
   HANDLE_TH_ERRORS
   auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
   auto& type = self_.type().toScalarType(scalarType);
-  return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type));
+  return THPVariable_Wrap(dispatch_type(self_, type));
   END_HANDLE_TH_ERRORS
 }
 static PyObject * THPVariable_byte(PyObject* self, PyObject* args) {
@@ -406,29 +438,6 @@ static PyObject * THPVariable_record_stream(PyObject* self, PyObject* arg)
 #else
   throw std::runtime_error("PyTorch compiled without CUDA support");
 #endif
-  END_HANDLE_TH_ERRORS
-}
-
-static PyObject * THPVariable_requires_grad_(PyObject* self, PyObject* args, PyObject* kwargs)
-{
-  HANDLE_TH_ERRORS
-  static PythonArgParser parser({
-    "requires_grad_(bool requires_grad=True)",
-  });
-  auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
-  ParsedArgs<1> parsed_args;
-  auto r = parser.parse(args, kwargs, parsed_args);
-  auto requires_grad = r.toBool(0);
-  // should we throw if requires_grad is true?  var.requires_grad = True throws here
-  // but it's nice to let this be a no-op.
-  if (!self_.is_leaf() && !requires_grad) {
-    throw std::runtime_error(autograd::utils::requires_grad_leaf_error(requires_grad));
-  }
-  if (requires_grad && !self_.is_floating_point()) {
-    throw std::runtime_error("only Tensors of floating point dtype can require gradients");
-  }
-  self_.set_requires_grad(requires_grad);
-  return THPVariable_Wrap(self_);
   END_HANDLE_TH_ERRORS
 }
 
@@ -552,39 +561,6 @@ static PyObject * THPVariable_storage_type(PyObject* self, PyObject* arg)
   END_HANDLE_TH_ERRORS
 }
 
-static PyObject * THPVariable_to(PyObject* self, PyObject* args, PyObject* kwargs)
-{
-  HANDLE_TH_ERRORS
-  static PythonArgParser parser({
-    "to(Device device, ScalarType dtype=None)",
-    "to(ScalarType dtype)",
-    "to(Tensor other)",
-  });
-  auto& self_ = reinterpret_cast<THPVariable*>(self)->cdata;
-  ParsedArgs<2> parsed_args;
-  auto r = parser.parse(args, kwargs, parsed_args);
-  if (r.idx == 0) {
-    auto device = r.device(0);
-    auto deviceAutoGPU = device.deviceInt64();
-    auto scalarType = r.scalartypeWithDefault(1, self_.type().scalarType());
-    auto& layout = *torch::getLayout(self_.type().backend());
-    auto& type = torch::getType(scalarType, layout, device.type);
-    return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type, deviceAutoGPU, false));
-  } else if (r.idx == 1) {
-    auto scalarType = r.scalartype(0);
-    auto& type = self_.type().toScalarType(scalarType);
-    return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type));
-  } else if (r.idx == 2) {
-    auto other = r.tensor(0);
-    auto& type = other.type();
-    auto deviceType = torch::getDeviceType(type);
-    auto deviceAutoGPU = (deviceType == DeviceType::CPU) ? -1 : other.get_device();
-    return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type, deviceAutoGPU, false));
-  }
-  Py_RETURN_NONE;
-  END_HANDLE_TH_ERRORS
-}
-
 static PyObject * THPVariable_tolist(PyObject* self, PyObject* args)
 {
   HANDLE_TH_ERRORS
@@ -610,11 +586,7 @@ static PyObject * THPVariable_type(PyObject* self, PyObject* args, PyObject* kwa
   std::string type_name;
   bool is_dtype = false;
   if (PyType_Check(obj)) {
-    if (obj == THPVariableClass) {
-      type_name = "torch.Tensor";
-    } else {
-      type_name = ((PyTypeObject*)obj)->tp_name;
-    }
+    type_name = ((PyTypeObject*)obj)->tp_name;
   } else if (THPUtils_checkString(obj)) {
     type_name = THPUtils_unpackString(obj);
   } else if (THPDtype_Check(obj)) {
@@ -622,10 +594,8 @@ static PyObject * THPVariable_type(PyObject* self, PyObject* args, PyObject* kwa
   } else {
     throw TypeError("dtype must be a type, str, or dtype object");
   }
-  auto self_device_type = torch::getDeviceType(self_.type());
-  auto& type = is_dtype ? torch::getType(r.scalartype(0), *torch::getLayout(self_.type().backend()), self_device_type) :
-                          torch::utils::type_from_string(type_name);
-  return THPVariable_Wrap(torch::utils::dispatch_type_conversion(self_, type, -1, r.toBool(1)));
+  auto& type = is_dtype ? r.type(0) : torch::utils::type_from_string(type_name);
+  return THPVariable_Wrap(dispatch_type(self_, type, -1, r.toBool(1)));
   END_HANDLE_TH_ERRORS
 }
 
@@ -685,13 +655,11 @@ PyMethodDef variable_methods[] = {
   {"new_zeros", (PyCFunction)THPVariable_new_zeros, METH_VARARGS | METH_KEYWORDS, NULL},
   {"numpy", (PyCFunction)THPVariable_numpy, METH_NOARGS, NULL},
   {"record_stream", (PyCFunction)THPVariable_record_stream, METH_O, NULL},
-  {"requires_grad_", (PyCFunction)THPVariable_requires_grad_, METH_VARARGS | METH_KEYWORDS, NULL},
   {"short", (PyCFunction)THPVariable_short, METH_NOARGS, NULL},
   {"size", (PyCFunction)THPVariable_size, METH_VARARGS | METH_KEYWORDS, NULL},
   {"storage", (PyCFunction)THPVariable_storage, METH_NOARGS, NULL},
   {"storage_type", (PyCFunction)THPVariable_storage_type, METH_NOARGS, NULL},
   {"stride", (PyCFunction)THPVariable_stride, METH_VARARGS | METH_KEYWORDS, NULL},
-  {"to", (PyCFunction)THPVariable_to, METH_VARARGS | METH_KEYWORDS, NULL},
   {"tolist", (PyCFunction)THPVariable_tolist, METH_NOARGS, NULL},
   {"type", (PyCFunction)THPVariable_type, METH_VARARGS | METH_KEYWORDS, NULL},
   ${py_method_defs}

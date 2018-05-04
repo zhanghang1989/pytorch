@@ -75,7 +75,7 @@ int deviceForInputs(Stack & stack, size_t N) {
 // A list of functions taking TensorList arguments (where we can't use
 // the number of inputs to choose an overload).
 std::unordered_set<Symbol> tensor_vararg_fns = {
-  aten::cat,
+  kcat,
 };
 
 template<size_t N>
@@ -86,27 +86,21 @@ std::array<bool, N> as_bool_array(const std::vector<int64_t>& vec) {
   return res;
 }
 
-
-using operator_constructor = std::function<TensorOp(jit::Node*)>;
-std::unordered_map<std::string, operator_constructor> constructors = {
+ConstructorsMap constructors = {
   ${constructors}
 };
 
 std::string getDescriptor(jit::Node* n) {
   std::stringstream s;
-  JIT_ASSERTM(n->kind().is_aten(), "%s is not an ATen op", n->kind().toDisplayString());
-  s << n->kind().toUnqualString();
+  s << n->kind().toString();
   if (tensor_vararg_fns.count(n->kind()) == 0)
     s << "-" << n->inputs().size();
   else
     s << "-*";
-  std::vector<std::string> attr_names = fmap(n->attributeNames(), [&](Symbol x) {
-    std::stringstream ss;
-    ss << x.toUnqualString() << "_" << toString(n->kindOf(x));
-    return ss.str();
+  std::vector<const char*> attr_names = fmap(n->attributeNames(), [](Symbol x) { return x.toString(); });
+  std::sort(attr_names.begin(), attr_names.end(), [](const char *a, const char *b) {
+    return std::strcmp(a, b) < 0;
   });
-  std::sort(attr_names.begin(), attr_names.end());
-
   for (const auto & name : attr_names)
     s << "-" << name;
   return s.str();
@@ -114,23 +108,22 @@ std::string getDescriptor(jit::Node* n) {
 
 } // anonymous namespace
 
-at::optional<TensorOp> findTensorOp(jit::Node* n) {
+ConstructorsMap::iterator findTensorOp(jit::Node* n) {
   auto signature = getDescriptor(n);
-  auto it = constructors.find(signature);
-  if(it == constructors.end()) {
-    return at::nullopt;
-  }
-  return it->second(n);
+  return constructors.find(signature);
+}
+bool hasTensorOp(jit::Node* n) {
+  return constructors.end() != findTensorOp(n);
 }
 TensorOp getTensorOp(jit::Node* n) {
-  auto op = findTensorOp(n);
-  if (!op) {
+  auto itr = findTensorOp(n);
+  if (itr == constructors.end()) {
     throw std::runtime_error(
         "Unsupported op descriptor: " + getDescriptor(n) +
         ". "
         "File a bug report.");
   }
-  return op.value();
+  return itr->second(n);
 }
 
 }} // namespace torch::jit

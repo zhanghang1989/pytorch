@@ -54,10 +54,11 @@ class Linear(Module):
     def forward(self, input):
         return F.linear(input, self.weight, self.bias)
 
-    def extra_repr(self):
-        return 'in_features={}, out_features={}, bias={}'.format(
-            self.in_features, self.out_features, self.bias is not None
-        )
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + 'in_features=' + str(self.in_features) \
+            + ', out_features=' + str(self.out_features) \
+            + ', bias=' + str(self.bias is not None) + ')'
 
 
 class Bilinear(Module):
@@ -72,11 +73,8 @@ class Bilinear(Module):
             Default: ``True``
 
     Shape:
-        - Input: :math:`(N, *, \text{in1_features})`, :math:`(N, *, \text{in2_features})`
-          where :math:`*` means any number of additional dimensions. All but the last
-          dimension of the inputs should be the same.
-        - Output: :math:`(N, *, \text{out_features})` where all but the last dimension
-          are the same shape as the input.
+        - Input: :math:`(N, \text{in1_features})`, :math:`(N, \text{in2_features})`
+        - Output: :math:`(N, \text{out_features})`
 
     Attributes:
         weight: the learnable weights of the module of shape
@@ -114,9 +112,11 @@ class Bilinear(Module):
     def forward(self, input1, input2):
         return F.bilinear(input1, input2, self.weight, self.bias)
 
-    def extra_repr(self):
-        return 'in1_features={}, in2_features={}, out_features={}, bias={}'.format(
-            self.in1_features, self.in2_features, self.out_features, self.bias is not None
-        )
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + 'in1_features=' + str(self.in1_features) \
+            + ', in2_features=' + str(self.in2_features) \
+            + ', out_features=' + str(self.out_features) \
+            + ', bias=' + str(self.bias is not None) + ')'
 
 # TODO: PartialLinear - maybe in sparse?

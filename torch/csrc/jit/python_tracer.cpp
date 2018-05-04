@@ -1,4 +1,4 @@
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 #include "torch/csrc/jit/python_tracer.h"
 #include "torch/csrc/jit/tracer.h"
@@ -40,8 +40,9 @@ void initPythonTracerBindings(PyObject* module_) {
       ASSERT_UNEXPIRED("pop_scope");
       s.pop_scope();
     })
-    .def("set_graph", [](TracingState& s, std::shared_ptr<Graph> g) {
-      s.graph = g;
+    .def("export", [](TracingState& s, const std::vector<at::Tensor>& initializers, int64_t onnx_opset_version) {
+      ASSERT_UNEXPIRED("export");
+      return py::bytes(ExportGraph(s.graph, initializers, onnx_opset_version));
     })
     .def("graph", [](TracingState& s) {
       return s.graph;
@@ -53,8 +54,8 @@ void initPythonTracerBindings(PyObject* module_) {
       return s.is_complete();
     });
 
-  m.def("_tracer_enter", [](variable_list trace_inputs, std::size_t num_backwards) {
-    return tracer::enter(std::move(trace_inputs), num_backwards + 1, true);
+  m.def("_tracer_enter", [](std::vector<TraceInput> trace_inputs, std::size_t num_backwards) {
+    return enter(std::move(trace_inputs), num_backwards + 1);
   });
   m.def("_tracer_exit", [](variable_list var_outputs) {
     tracer::exit(var_outputs);

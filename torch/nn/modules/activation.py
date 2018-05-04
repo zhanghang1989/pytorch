@@ -45,18 +45,19 @@ class Threshold(Module):
     def forward(self, input):
         return F.threshold(input, self.threshold, self.value, self.inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = ', inplace' if self.inplace else ''
-        return 'threshold={}, value={}{}'.format(
-            self.threshold, self.value, inplace_str
-        )
+        return self.__class__.__name__ + ' (' \
+            + str(self.threshold) \
+            + ', ' + str(self.value) \
+            + inplace_str + ')'
 
 
 class ReLU(Threshold):
     r"""Applies the rectified linear unit function element-wise
     :math:`\text{ReLU}(x)= \max(0, x)`
 
-    .. image:: scripts/activation_images/ReLU.png
+    .. image:: _static/img/activation/ReLU.png
 
     Args:
         inplace: can optionally do the operation in-place. Default: ``False``
@@ -76,9 +77,10 @@ class ReLU(Threshold):
     def __init__(self, inplace=False):
         super(ReLU, self).__init__(0, 0, inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = 'inplace' if self.inplace else ''
-        return inplace_str
+        return self.__class__.__name__ + '(' \
+            + inplace_str + ')'
 
 
 class RReLU(Module):
@@ -127,9 +129,12 @@ class RReLU(Module):
     def forward(self, input):
         return F.rrelu(input, self.lower, self.upper, self.training, self.inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = ', inplace' if self.inplace else ''
-        return 'lower={}, upper={}{}'.format(self.lower, self.upper, inplace_str)
+        return self.__class__.__name__ + '(' \
+            + str(self.lower) \
+            + ', ' + str(self.upper) \
+            + inplace_str + ')'
 
 
 class Hardtanh(Module):
@@ -147,7 +152,7 @@ class Hardtanh(Module):
     The range of the linear region :math:`[-1, 1]` can be adjusted using
     :attr:`min_val` and :attr:`max_val`.
 
-    .. image:: scripts/activation_images/Hardtanh.png
+    .. image:: _static/img/activation/Hardtanh.png
 
     Args:
         min_val: minimum value of the linear region range. Default: -1
@@ -186,11 +191,12 @@ class Hardtanh(Module):
     def forward(self, input):
         return F.hardtanh(input, self.min_val, self.max_val, self.inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = ', inplace' if self.inplace else ''
-        return 'min_val={}, max_val={}{}'.format(
-            self.min_val, self.max_val, inplace_str
-        )
+        return self.__class__.__name__ + '(' \
+            + 'min_val=' + str(self.min_val) \
+            + ', max_val=' + str(self.max_val) \
+            + inplace_str + ')'
 
 
 class ReLU6(Hardtanh):
@@ -204,7 +210,7 @@ class ReLU6(Hardtanh):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/ReLU6.png
+    .. image:: _static/img/activation/ReLU6.png
 
     Examples::
 
@@ -216,9 +222,10 @@ class ReLU6(Hardtanh):
     def __init__(self, inplace=False):
         super(ReLU6, self).__init__(0, 6, inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = 'inplace' if self.inplace else ''
-        return inplace_str
+        return self.__class__.__name__ + '(' \
+            + inplace_str + ')'
 
 
 class Sigmoid(Module):
@@ -229,7 +236,7 @@ class Sigmoid(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Sigmoid.png
+    .. image:: _static/img/activation/Sigmoid.png
 
     Examples::
 
@@ -241,6 +248,9 @@ class Sigmoid(Module):
     def forward(self, input):
         return torch.sigmoid(input)
 
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+
 
 class Tanh(Module):
     r"""Applies element-wise,
@@ -251,7 +261,7 @@ class Tanh(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Tanh.png
+    .. image:: _static/img/activation/Tanh.png
 
     Examples::
 
@@ -262,6 +272,9 @@ class Tanh(Module):
 
     def forward(self, input):
         return torch.tanh(input)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
 
 class ELU(Module):
@@ -277,7 +290,7 @@ class ELU(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/ELU.png
+    .. image:: _static/img/activation/ELU.png
 
     Examples::
 
@@ -294,9 +307,11 @@ class ELU(Module):
     def forward(self, input):
         return F.elu(input, self.alpha, self.inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = ', inplace' if self.inplace else ''
-        return 'alpha={}{}'.format(self.alpha, inplace_str)
+        return self.__class__.__name__ + '(' \
+            + 'alpha=' + str(self.alpha) \
+            + inplace_str + ')'
 
 
 class SELU(Module):
@@ -305,7 +320,7 @@ class SELU(Module):
     with :math:`\alpha = 1.6732632423543772848170429916717` and
     :math:`\text{scale} = 1.0507009873554804934193349852946`.
 
-    .. image:: scripts/activation_images/SELU.png
+    .. image:: _static/img/activation/SELU.png
 
     More details can be found in the paper `Self-Normalizing Neural Networks`_ .
 
@@ -333,9 +348,9 @@ class SELU(Module):
     def forward(self, input):
         return F.selu(input, self.inplace)
 
-    def extra_repr(self):
-        inplace_str = 'inplace' if self.inplace else ''
-        return inplace_str
+    def __repr__(self):
+        inplace_str = '(inplace)' if self.inplace else ''
+        return self.__class__.__name__ + inplace_str
 
 
 class GLU(Module):
@@ -365,8 +380,8 @@ class GLU(Module):
     def forward(self, input):
         return F.glu(input, self.dim)
 
-    def extra_repr(self):
-        return 'dim={}'.format(self.dim)
+    def __repr__(self):
+        return '{}(dim={})'.format(self.__class__.__name__, self.dim)
 
 
 class Hardshrink(Module):
@@ -389,7 +404,7 @@ class Hardshrink(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Hardshrink.png
+    .. image:: _static/img/activation/Hardshrink.png
 
     Examples::
 
@@ -405,8 +420,9 @@ class Hardshrink(Module):
     def forward(self, input):
         return F.hardshrink(input, self.lambd)
 
-    def extra_repr(self):
-        return '{}'.format(self.lambd)
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + str(self.lambd) + ')'
 
 
 class LeakyReLU(Module):
@@ -429,7 +445,7 @@ class LeakyReLU(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/LeakyReLU.png
+    .. image:: _static/img/activation/LeakyReLU.png
 
     Examples::
 
@@ -446,9 +462,11 @@ class LeakyReLU(Module):
     def forward(self, input):
         return F.leaky_relu(input, self.negative_slope, self.inplace)
 
-    def extra_repr(self):
+    def __repr__(self):
         inplace_str = ', inplace' if self.inplace else ''
-        return 'negative_slope={}{}'.format(self.negative_slope, inplace_str)
+        return self.__class__.__name__ + '(' \
+            + str(self.negative_slope) \
+            + inplace_str + ')'
 
 
 class LogSigmoid(Module):
@@ -459,7 +477,7 @@ class LogSigmoid(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/LogSigmoid.png
+    .. image:: _static/img/activation/LogSigmoid.png
 
     Examples::
 
@@ -470,6 +488,9 @@ class LogSigmoid(Module):
 
     def forward(self, input):
         return F.logsigmoid(input)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
 
 class Softplus(Module):
@@ -490,7 +511,7 @@ class Softplus(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Softplus.png
+    .. image:: _static/img/activation/Softplus.png
 
     Examples::
 
@@ -507,8 +528,10 @@ class Softplus(Module):
     def forward(self, input):
         return F.softplus(input, self.beta, self.threshold)
 
-    def extra_repr(self):
-        return 'beta={}, threshold={}'.format(self.beta, self.threshold)
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + 'beta=' + str(self.beta) \
+            + ', threshold=' + str(self.threshold) + ')'
 
 
 class Softshrink(Module):
@@ -532,7 +555,7 @@ class Softshrink(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Softshrink.png
+    .. image:: _static/img/activation/Softshrink.png
 
     Examples::
 
@@ -548,8 +571,9 @@ class Softshrink(Module):
     def forward(self, input):
         return F.softshrink(input, self.lambd)
 
-    def extra_repr(self):
-        return str(self.lambd)
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + str(self.lambd) + ')'
 
 
 class PReLU(Module):
@@ -580,7 +604,7 @@ class PReLU(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/PReLU.png
+    .. image:: _static/img/activation/PReLU.png
 
     Examples::
 
@@ -597,8 +621,9 @@ class PReLU(Module):
     def forward(self, input):
         return F.prelu(input, self.weight)
 
-    def extra_repr(self):
-        return 'num_parameters={}'.format(self.num_parameters)
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+            + 'num_parameters=' + str(self.num_parameters) + ')'
 
 
 class Softsign(Module):
@@ -609,7 +634,7 @@ class Softsign(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Softsign.png
+    .. image:: _static/img/activation/Softsign.png
 
     Examples::
 
@@ -621,6 +646,9 @@ class Softsign(Module):
     def forward(self, input):
         return F.softsign(input)
 
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+
 
 class Tanhshrink(Module):
     r"""Applies element-wise, :math:`\text{Tanhshrink}(x) = x - \text{Tanh}(x)`
@@ -630,7 +658,7 @@ class Tanhshrink(Module):
           dimensions
         - Output: :math:`(N, *)`, same shape as the input
 
-    .. image:: scripts/activation_images/Tanhshrink.png
+    .. image:: _static/img/activation/Tanhshrink.png
 
     Examples::
 
@@ -641,6 +669,9 @@ class Tanhshrink(Module):
 
     def forward(self, input):
         return F.tanhshrink(input)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
 
 class Softmin(Module):
@@ -674,6 +705,9 @@ class Softmin(Module):
 
     def forward(self, input):
         return F.softmin(input, self.dim, _stacklevel=5)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
 
 class Softmax(Module):
@@ -720,6 +754,9 @@ class Softmax(Module):
     def forward(self, input):
         return F.softmax(input, self.dim, _stacklevel=5)
 
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+
 
 class Softmax2d(Module):
     r"""Applies SoftMax over features to each spatial location.
@@ -746,6 +783,9 @@ class Softmax2d(Module):
     def forward(self, input):
         assert input.dim() == 4, 'Softmax2d requires a 4D tensor as input'
         return F.softmax(input, 1, _stacklevel=5)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
 
 class LogSoftmax(Module):
@@ -784,3 +824,6 @@ class LogSoftmax(Module):
 
     def forward(self, input):
         return F.log_softmax(input, self.dim, _stacklevel=5)
+
+    def __repr__(self):
+        return self.__class__.__name__ + '()'

@@ -1,5 +1,5 @@
 #ifndef NO_PYTHON
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #endif
 #include "interpreter.h"
 
@@ -51,84 +51,19 @@ namespace torch { namespace jit {
 // * stage_input_types: the type annotations on the inputs to each stage
 //   these can be removed once the the backward tracer is no longer used
 
-namespace {
-
-// new_cond = (i < max_trip_count) && cond
-Value* createTripCountConjunctiveCondition(
-    Graph* g,
-    Value* cur_trip_count,
-    Value* max_trip_count,
-    Value* cond) {
-  // Emit initial comparison -- initial_trip_count < max_trip_count
-  Value* initial_comparison_value =
-      g->insertNode(g->create(aten::lt, {cur_trip_count, max_trip_count}, 1))
-          ->output();
-
-  // Replace initial condition with logical `and` of trip count and
-  // initial condition
-  Value* new_cond =
-      g->insertNode(
-           g->create(aten::__and__, {initial_comparison_value, cond}, 1))
-          ->output();
-  return new_cond;
-}
-
-} // namespace
 
 // this currently just _removes_ the trip count inputs and checks they are
 // unused. In the future they will be desugared into normal arithmetic to
 // provide a loop counter
 void desugarTripCounts(Block * b) {
   for(auto n : b->nodes()) {
+    if(n->kind() == kLoop) {
 
-    if(n->kind() == prim::Loop) {
-      auto g = n->owningGraph();
-      auto body_block = n->blocks()[0];
-
-      Value* block_trip_count_input = body_block->inputs()[0];
-      // Treat loop iteration number as a loop-carried dependency. We emit an
-      // increment at the end of the body block.
-      n->insertOutput(0);
-
-      Value* max_trip_count_value = n->input(0);
-      {
-        WithInsertPoint guard(n);
-        // int i = 0
-        Value* initial_trip_count =
-            g->insertNode(g->createConstant(at::zeros(at::CPU(at::kLong), {1})))
-                ->output();
-        // Set up initial iteration number value for loop-carried dependency
-        n->removeInput(0);
-        // Input 0 is now initial termination condition, insert this after that.
-        // LCD's start at index 1.
-        n->insertInput(1, initial_trip_count);
-
-        Value* new_cond = createTripCountConjunctiveCondition(
-            g, initial_trip_count, max_trip_count_value, n->input(0));
-        n->replaceInput(0, new_cond);
-      }
-
-      {
-        WithInsertPoint guard(body_block);
-        // Trip count is now a loop carried dependency. We emit an op to
-        // increment the trip count at the end of the body. Then, emit the same
-        // conjunctive stopping condition as above.
-
-        Value* const_one =
-            g->insertNode(g->createConstant(at::ones(at::CPU(at::kLong), {1})))
-                ->output();
-
-        Value* inc_trip_count =
-            g->insertNode(g->create(
-                    aten::add, {block_trip_count_input, const_one, const_one}, 1))
-             ->output();
-        body_block->insertOutput(1, inc_trip_count);
-
-        Value* body_cond = createTripCountConjunctiveCondition(
-            g, inc_trip_count, max_trip_count_value, body_block->outputs()[0]);
-        body_block->eraseOutput(0);
-        body_block->insertOutput(0, body_cond);
-      }
+      // remove the trip count from Loop inputs, we don't support it yet
+      n->removeInput(0);
+      JIT_ASSERT(n->blocks()[0]->inputs()[0]->uses().size() == 0 &&
+        "NYI - use of trip count variable");
+      n->blocks()[0]->eraseInput(0);
     }
     for(auto sb : n->blocks()) {
       desugarTripCounts(sb);
@@ -147,7 +82,7 @@ static std::vector<std::vector<TypePtr>> flattenStages(Graph & graph) {
   auto it = graph.nodes().begin();
   for(size_t i = 0; i <= graph.stage(); i++) {
     stage_input_types.emplace_back();
-    auto store = graph.create(prim::Store, 0)->insertBefore(*it);
+    auto store = graph.create(kStore, 0)->insertBefore(*it);
     while(input_pos < graph.inputs().size() && graph.inputs()[input_pos]->stage() == i) {
       auto nv = store->addOutput();
       auto old_node = graph.inputs()[input_pos];
@@ -157,7 +92,7 @@ static std::vector<std::vector<TypePtr>> flattenStages(Graph & graph) {
     }
     while(it != graph.nodes().end() && it->stage() == i)
       ++it;
-    auto load = graph.create(prim::Load, 0)->insertBefore(*it);
+    auto load = graph.create(kLoad, 0)->insertBefore(*it);
     while(output_pos < graph.outputs().size() && graph.outputs()[output_pos]->stage() == i) {
       load->addInput(graph.outputs()[output_pos]);
       output_pos++;
@@ -186,7 +121,7 @@ void dropUnused(Block *b) {
     }
     if(to_drop.size() == 0)
       return nullptr;
-    return b->owningGraph()->create(prim::Drop, to_drop, 0);
+    return b->owningGraph()->create(kDrop, to_drop, 0);
   };
 
   if(auto d = createDropIfUnused(b->inputs())) {
@@ -291,7 +226,7 @@ std::unordered_map<Node*, std::vector<uint8_t>> findLastUses(Graph & g) {
     Node * findOrCreateDropInstructionForNode(Node * n) {
       auto it = drop_for_node.find(n);
       if(it == drop_for_node.end()) {
-        auto drop_node = graph.create(prim::Drop, 0);
+        auto drop_node = graph.create(kDrop, 0);
         drop_node->insertAfter(n);
         it = drop_for_node.emplace(n, drop_node).first;
       }
@@ -441,7 +376,12 @@ bool hasHandleOutput(Node * n) {
 
 #ifndef NO_PYTHON
 Operation createPythonOperation(PythonOp* op, bool values_are_variables) {
-  py::function func = py::reinterpret_borrow<py::function>(py::handle(op->pyobj.get()));
+  py::function func;
+  if (op->tracing_autograd_python_function) {
+    func = py::function(py::handle(op->pyobj.get()).attr("apply"));
+  } else {
+    func = py::reinterpret_borrow<py::function>(py::handle(op->pyobj.get()));
+  }
   bool tracing_autograd_python_function = op->tracing_autograd_python_function;
   bool has_handle = hasHandleOutput(op);
   size_t num_inputs = 0;
@@ -649,13 +589,13 @@ Operation getOperation(jit::Node* node, bool values_are_variables) {
     };
   IR_ELSEIF(Constant)
   if (values_are_variables) {
-    auto t = torch::autograd::make_variable(value->t(attr::value), false);
+    auto t = torch::autograd::make_variable(value->t(kvalue), false);
     return [t](Stack& stack) {
       stack.push_back(t);
       return 0;
     };
     } else {
-      auto t = value->t(attr::value);
+      auto t = value->t(kvalue);
       return [t](Stack & stack) {
         stack.push_back(t);
         return 0;
@@ -689,8 +629,7 @@ Operation getOperation(jit::Node* node, bool values_are_variables) {
         } else if (!i.defined()) {
           std::cout << "<undefined tensor>";
         } else {
-          auto& r = *i.get();
-          std::cout << "<" << typeid(r).name() << " at " << i << ">";
+          std::cout << "<" << typeid(*i.get()).name() << " at " << i << ">";
         }
       }
       drop(stack, num_inputs);
@@ -698,7 +637,7 @@ Operation getOperation(jit::Node* node, bool values_are_variables) {
       return 0;
     };
   IR_ELSEIF(GraphExecutor)
-    GraphExecutor executor(value->g(attr::Subgraph));
+    GraphExecutor executor(value->g(kSubgraph));
     auto num_inputs = value->inputs().size();
     return [=](Stack& stack) mutable {
       autograd::profiler::RecordFunction record("GraphExecutor");
@@ -736,35 +675,6 @@ Operation getOperation(jit::Node* node, bool values_are_variables) {
       return 0;
     };
   IR_ELSE()
-    switch (node->kind()) {
-      case onnx::Reshape: {
-        return [=](Stack& stack) {
-          auto shape = pop(stack).contiguous();
-          auto input = pop(stack);
-          JIT_ASSERT(shape.ndimension() == 1);
-          at::IntList shape_list(shape.data<int64_t>(), shape.size(0));
-          stack.push_back(input.reshape(shape_list));
-          return 0;
-        };
-      } break;
-      case onnx::Shape: {
-        return [=](Stack& stack) {
-          auto t = pop(stack);
-          at::IntList sizes = t.sizes();
-          auto sizes_tensor = at::CPU(at::kLong).tensor(sizes.size());
-          auto accessor = sizes_tensor.accessor<int64_t, 1>();
-          for (size_t i=0; i<sizes.size(); ++i) {
-            accessor[i] = sizes[i];
-          }
-          if (values_are_variables) {
-            sizes_tensor = torch::autograd::make_variable(sizes_tensor);
-          }
-          stack.push_back(sizes_tensor);
-          return 0;
-        };
-      } break;
-      default: ;
-    };
     return getTensorOp(node).op;
   IR_END()
 }
@@ -813,42 +723,42 @@ struct CodeImpl {
   // jump when input is 0
   void createJumpZ(int from_inst, int to_inst) {
     auto & inst = instructions[from_inst];
-    JIT_ASSERT(inst.debug_name == prim::Placeholder);
+    JIT_ASSERT(inst.debug_name == kPlaceholder);
     auto offset = relativeJump(from_inst, to_inst);
     inst.callback = [offset](Stack & stack) {
       auto t = tensor_as<int64_t>(pop(stack));
       return (t == 0) ? offset : 0;
     };
-    inst.debug_name = prim::JumpZ;
+    inst.debug_name = kJumpZ;
   }
 
   // jump when input is not 0
   void createJumpNZ(int from_inst, int to_inst) {
     auto & inst = instructions[from_inst];
-    JIT_ASSERT(inst.debug_name == prim::Placeholder);
+    JIT_ASSERT(inst.debug_name == kPlaceholder);
     auto offset = relativeJump(from_inst, to_inst);
     inst.callback = [offset](Stack & stack) {
       auto t = tensor_as<int64_t>(pop(stack));
       return (t != 0) ? offset : 0;
     };
-    inst.debug_name = prim::JumpNZ;
+    inst.debug_name = kJumpNZ;
   }
 
   void createJump(int from_inst, int to_inst) {
     auto & inst = instructions[from_inst];
-    JIT_ASSERT(inst.debug_name == prim::Placeholder);
+    JIT_ASSERT(inst.debug_name == kPlaceholder);
     auto offset = relativeJump(from_inst, to_inst);
     inst.callback = [=](Stack & stack) {
       return offset;
     };
-    inst.debug_name = prim::Jump;
+    inst.debug_name = kJump;
   }
 
   void insertNodesFromBlock(Block* block) {
     for(auto node : block->nodes()) {
       const auto & source_location = node->getSourceLocation();
       switch(node->kind()) {
-        case prim::If: {
+        case kIf: {
           // x = if c:
           //   <then_block>
           //   -> (vt)
@@ -866,21 +776,21 @@ struct CodeImpl {
           //   x = vt
           // end:
 
-          // prim::Placeholder instructions are replaced with branch instructions
+          // kPlaceholder instructions are replaced with branch instructions
           // when the branch target locations are known
-          auto cond_branch = insertInstruction(prim::Placeholder, source_location, node->inputs(), moveFlags(node), {});
+          auto cond_branch = insertInstruction(kPlaceholder, source_location, node->inputs(), moveFlags(node), {});
           auto then_block = node->blocks()[0];
           auto else_block = node->blocks()[1];
           insertNodesFromBlock(else_block);
           insertAssign(source_location,else_block->outputs(), moveFlags(else_block), node->outputs());
-          auto jump = insertInstruction(prim::Placeholder, source_location, {}, {}, {});
+          auto jump = insertInstruction(kPlaceholder, source_location, {}, {}, {});
           auto then_block_start = instructions.size();
           insertNodesFromBlock(then_block);
           insertAssign(source_location, then_block->outputs(), moveFlags(then_block), node->outputs());
           createJump(jump, instructions.size());
           createJumpNZ(cond_branch, then_block_start);
         } break;
-        case prim::Loop: {
+        case kLoop: {
           // o0 = while c i0
           //        block 0: l0
           //          <body>
@@ -901,7 +811,7 @@ struct CodeImpl {
           insertAssign(source_location, node->inputs(), moveFlags(node), body_block->inputs());
           // after assign op: stack: ... <cond>
           // cond_branch consumes <cond> from top of the stack
-          auto cond_branch = insertInstruction(prim::Placeholder, source_location,{}, {}, {});
+          auto cond_branch = insertInstruction(kPlaceholder, source_location,{}, {}, {});
           // after branch: stack: ...
 
           auto entry = instructions.size();
@@ -909,7 +819,7 @@ struct CodeImpl {
           // before assign op: stack: ... <cond> <loop-carried-depdencies>
           insertAssign(source_location, body_block->outputs(), moveFlags(body_block), body_block->inputs());
           // after assign op: stack: ... <cond>
-          auto cond_branch_end = insertInstruction(prim::Placeholder, source_location, {}, {}, {});
+          auto cond_branch_end = insertInstruction(kPlaceholder, source_location, {}, {}, {});
           // after branch: stack: ...
 
           aliasRegistersTo(node->outputs(), body_block->inputs());
@@ -923,7 +833,7 @@ struct CodeImpl {
       // each stage ends with a load instruction
       // we record where these instructions occur, and use them to
       // exit the interpreter
-      if(node->kind() == prim::Load) {
+      if(node->kind() == kLoad) {
         stage_end.push_back(instructions.size());
       }
     }
@@ -965,7 +875,7 @@ struct CodeImpl {
   }
 
   size_t insertAssign(std::shared_ptr<SourceLocation> debug_location, ArrayRef<Value*> inputs, ArrayRef<uint8_t> move_flags, ArrayRef<Value*> outputs) {
-    auto inst = insertInstruction(prim::Assign, std::move(debug_location),inputs, move_flags, outputs);
+    auto inst = insertInstruction(kAssign, std::move(debug_location),inputs, move_flags, outputs);
     // This node effectively forwards its inputs into different places in a register list.
     // We don't need to manipulate the stack in any way, because all inputs are also outputs,
     // and the interpreter will take care of putting them in correct places.
@@ -1039,9 +949,7 @@ struct CodeImpl {
     };
     auto & inst = instructions.at(pc);
     writeList(inst.outputs);
-    // NB: debug names are the kind of operator used to select
-    // dispatch
-    out << " = " << inst.debug_name.toUnqualString() << " ";
+    out << " = " << inst.debug_name.toString() << " ";
     writeUseList(inst.inputs);
   }
   void dump(std::ostream & out) const {

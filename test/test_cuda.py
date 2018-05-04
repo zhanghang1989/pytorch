@@ -35,7 +35,7 @@ def is_floating(t):
 
 def is_half(t):
     if isinstance(t, torch.Tensor):
-        return t.dtype == torch.float16
+        return t.dtype in [torch.float16, torch.cuda.float16]
     assert isinstance(t, type)
     assert t != torch.autograd.Variable
     return t in [torch.HalfTensor, torch.cuda.HalfTensor]
@@ -406,6 +406,7 @@ tests = [
     ('qr', large_2d_lapack, lambda t: [], 'big', float_types),
     ('inverse', new_t(20, 20), lambda t: [], None, float_types),
     ('geqrf', new_t(20, 20), lambda t: [], None, float_types),
+    # TODO: add det to here once Variable and Tensor are the same thing
 ]
 
 # TODO: random functions, cat, gather, scatter, index*, masked*,
@@ -450,9 +451,7 @@ custom_half_precision = {
     'lerp': 1e-2,
     'lgamma': 1e-2,
     'log': 1e-2,
-    'log10': 1e-2,
     'log1p': 1e-3,
-    'log2': 1e-2,
     'mean': 1e-3,
     'mul': 1e-2,
     'norm': 1e-1,
@@ -484,9 +483,7 @@ for fn in simple_pointwise:
 
 simple_pointwise_float = [
     'log',
-    'log10',
     'log1p',
-    'log2',
     'sigmoid',
     'sin',
     'sqrt',
@@ -540,7 +537,7 @@ def compare_cpu_gpu(tensor_constructor, arg_constructor, fn, t, precision=1e-5):
         gpu_args = [to_gpu(arg) for arg in cpu_args]
         if t.__name__ == 'HalfTensor':
             cpu_tensor = cpu_tensor.float()
-            cpu_args = [arg.float() if isinstance(arg, torch.Tensor) and is_half(arg) else arg for arg in cpu_args]
+            cpu_args = [arg.float() if torch.is_tensor(arg) and is_half(arg) else arg for arg in cpu_args]
         cpu_result = getattr(cpu_tensor, fn)(*cpu_args)
         try:
             gpu_result = getattr(gpu_tensor, fn)(*gpu_args)
@@ -756,6 +753,23 @@ class TestCuda(TestCase):
         self.assertEqual(x.new([0, 1, 2]).get_device(), 0)
         self.assertEqual(x.new([0, 1, 2], device=1).get_device(), 1)
 
+        y = x.new(dtype=torch.cuda.int64, device=1)
+        self.assertEqual(y.get_device(), 1)
+        self.assertIs(y.dtype, torch.cuda.int64)
+        y = x.new(dtype=torch.int64)
+        self.assertIs(y.dtype, torch.int64)
+
+        y = x.new(1, 2, 3, dtype=torch.cuda.int64, device=1)
+        self.assertEqual(y.get_device(), 1)
+        self.assertIs(y.dtype, torch.cuda.int64)
+        y = x.new(1, 2, 3, dtype=torch.int64)
+        self.assertIs(y.dtype, torch.int64)
+
+        y = x.new([0, 1, 2], dtype=torch.cuda.int64, device=1)
+        self.assertEqual(y.get_device(), 1)
+        self.assertIs(y.dtype, torch.cuda.int64)
+        y = x.new([0, 1, 2], dtype=torch.int64)
+        self.assertIs(y.dtype, torch.int64)
         with torch.cuda.device(1):
             self.assertEqual(x.new([0, 1, 2]).get_device(), 0)
             self.assertEqual(x.new([0, 1, 2], device=1).get_device(), 1)
@@ -834,20 +848,6 @@ class TestCuda(TestCase):
 
     def test_broadcast_gpu(self):
         self._test_broadcast(torch.randn(5, 5).cuda())
-
-    def test_min_max_nan(self):
-        tests = [(lambda x: x.min(), 'min'),
-                 (lambda x: x.max(), 'max'),
-                 (lambda x: x.min(0)[0], 'min_dim'),
-                 (lambda x: x.max(0)[0], 'max_dim')]
-        for f, name in tests:
-            a = torch.arange(25.0).view(5, 5)
-            a[2, 2] = float('nan')
-            actual = f(a.cuda()).cpu()
-            expected = f(a).cpu()
-            self.assertEqual(torch.isnan(actual), torch.isnan(expected), 'nans for {}'.format(name))
-            self.assertEqual(actual[~torch.isnan(actual)],
-                             expected[~torch.isnan(expected)], 'nans for {}'.format(name))
 
     @staticmethod
     def _test_broadcast_coalesced(self, tensors, buffer_size):
@@ -1079,11 +1079,8 @@ class TestCuda(TestCase):
         z = torch.cat([x, y])
         self.assertEqual(z.size(), (21, SIZE, SIZE))
 
-    def test_cat_empty(self):
-        TestTorch._test_cat_empty(self, use_cuda=True)
-
     def test_bernoulli(self):
-        x = torch.tensor([0, 1], dtype=torch.float32, device='cuda')
+        x = torch.tensor([0, 1], dtype=torch.cuda.float32)
         self.assertEqual(x.bernoulli().tolist(), [0, 1])
 
     def test_cat_bad_input_sizes(self):
@@ -1317,45 +1314,17 @@ class TestCuda(TestCase):
         return TestTorch._select_broadcastable_dims(dims_full)
 
     @unittest.skipIf(not HAS_MAGMA, "no MAGMA library detected")
-    def test_det_logdet_slogdet(self):
-        TestTorch._test_det_logdet_slogdet(self, lambda t: t.cuda())
+    def test_det(self):
+        TestTorch._test_det(self, lambda t: t.cuda())
 
     def test_view(self):
         TestTorch._test_view(self, lambda t: t.cuda())
 
-    def test_fft_ifft_rfft_irfft(self):
-        def cuda_randn_double(*sizes):
-            return torch.cuda.DoubleTensor(*sizes).normal_()
-        TestTorch._test_fft_ifft_rfft_irfft(self, build_fn=cuda_randn_double)
-
     def test_stft(self):
-        def cuda_randn_double(*sizes):
-            return torch.cuda.DoubleTensor(*sizes).normal_()
-        TestTorch._test_stft(self, build_fn=cuda_randn_double)
+        TestTorch._test_stft(self, lambda t: t.cuda())
 
     def test_multinomial(self):
         TestTorch._test_multinomial(self, torch.cuda.FloatTensor)
-
-        # Test a corner case from older PyTorch (Issue #4858)
-        freqs = torch.cuda.FloatTensor([
-            0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            0.03178183361887932, 0.027680952101945877, 0.033176131546497345,
-            0.046052902936935425, 0.07742464542388916, 0.11543981730937958,
-            0.14148041605949402, 0.15784293413162231, 0.13180233538150787,
-            0.08271478116512299, 0.049702685326337814, 0.027557924389839172,
-            0.018125897273421288, 0.011851548217236996, 0.010252203792333603,
-            0.007422595750540495, 0.005372154992073774, 0.0045109698548913,
-            0.0036087757907807827, 0.0035267581697553396, 0.0018864056328311563,
-            0.0024605290964245796, 0.0022964938543736935, 0.0018453967059031129,
-            0.0010662291897460818, 0.0009842115687206388, 0.00045109697384759784,
-            0.0007791675161570311, 0.00020504408166743815, 0.00020504408166743815,
-            0.00020504408166743815, 0.00012302644609007984, 0.0,
-            0.00012302644609007984, 4.100881778867915e-05, 0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0])
-
-        torch.cuda.manual_seed(11042)
-        sample = torch.multinomial(freqs, 1000, True)
-        self.assertNotEqual(freqs[sample].min(), 0)
 
     def test_broadcast(self):
         TestTorch._test_broadcast(self, lambda t: t.cuda())
@@ -1377,51 +1346,33 @@ class TestCuda(TestCase):
 
     def test_advancedindex_mixed_cpu_cuda(self):
         def test(x, ia, ib):
-            # test getitem
             self.assertEqual(x[:, ia, None, ib, 0].cpu(),
                              x.cpu()[:, ia.cpu(), None, ib.cpu(), 0])
             self.assertEqual(x[ia], x.cpu()[ia.cpu()])
-            # test setitem
-            x_clone1 = x.clone()
-            x_clone2 = x.clone()
-            first_shape = x[:, ia, None, ib, 0].shape
-            second_shape = x[ia].shape
-            x_clone1[:, ia, None, ib, 0] = torch.randn(first_shape).to(x_clone1)
-            x_clone2[ia] = torch.randn(second_shape).to(x_clone2)
 
-        cpu = torch.device('cpu')
-        for device in ['cuda:0', 'cuda:1'] if torch.cuda.device_count() > 1 else ['cuda']:
-            # Index cpu tensor with cuda tensor
-            x = torch.randn(3, 4, 4, 4, 3)
-            ia = torch.tensor([0, 2, 1]).to(device)
-            ib = torch.tensor([0, 2, 1]).to(device)
-            test(x, ia, ib)
+        # Index cpu tensor with cuda tensor
+        x = torch.randn(3, 4, 4, 4, 3)
+        ia = torch.cuda.LongTensor([0, 2, 1])
+        ib = torch.cuda.LongTensor([0, 2, 1])
+        test(x, ia, ib)
 
-            # Index cuda tensor with cpu tensor
-            x = x.to(device)
-            ia = ia.to(cpu)
-            ib = ib.to(cpu)
-            test(x, ia, ib)
+        # Index cuda tensor with cpu tensor
+        x = x.cuda()
+        ia = ia.cpu()
+        ib = ib.cpu()
+        test(x, ia, ib)
 
-            # Index cpu tensor with mixed cpu, cuda tensors
-            x = x.to(cpu)
-            ia = ia.to(cpu)
-            ib = ib.to(device)
-            test(x, ia, ib)
+        # Index cpu tensor with mixed cpu, cuda tensors
+        x = x.cpu()
+        ia = ia.cpu()
+        ib = ib.cuda()
+        test(x, ia, ib)
 
-            # Index cuda tensor with mixed cpu, cuda tensors
-            x = x.to(device)
-            ia = ia.to(cpu)
-            ib = ib.to(device)
-            test(x, ia, ib)
-
-            if torch.cuda.device_count() > 1:
-                other_device = 'cuda:0' if device != 'cuda:0' else 'cuda:1'
-                # Index cuda tensor with mixed cpu, cuda tensors on different devices
-                x = x.to(device)
-                ia = ia.to(cpu)
-                ib = ib.to(other_device)
-                test(x, ia, ib)
+        # Index cuda tensor with mixed cpu, cuda tensors
+        x = x.cuda()
+        ia = ia.cpu()
+        ib = ib.cuda()
+        test(x, ia, ib)
 
     def test_advancedindex_big(self):
         TestTorch._test_advancedindex_big(self, lambda t: t.cuda())
@@ -1462,9 +1413,6 @@ class TestCuda(TestCase):
 
     def test_int_pow(self):
         TestTorch._test_int_pow(self, lambda x: x.cuda())
-
-    def test_remainder_overflow(self):
-        TestTorch._test_remainder_overflow(self, dtype=torch.int64, device='cuda')
 
     def test_var(self):
         cpu_tensor = torch.randn(2, 3, 3)
@@ -1532,18 +1480,6 @@ class TestCuda(TestCase):
         test(True)
         test(False)
 
-        # Test float32 behavior near and at poles.
-        cpu_tensor = torch.tensor([-0.999999994, -1.999999994, -2.0000000111,
-                                  -100.99999994, -1931.99999994, 0.000000111,
-                                  -0.000000111, 0, -1, -2, -931])
-        nan = float('nan')
-        expected_errors = torch.tensor([0, 0, 0, 0, 0, 0, 0, nan, nan, nan, nan])
-        gpu_tensor = cpu_tensor.cuda()
-        cpu_out = cpu_tensor.digamma()
-        gpu_out = gpu_tensor.digamma()
-        norm_errors = (gpu_out - cpu_out.cuda()) / gpu_out
-        self.assertEqual(norm_errors, expected_errors)
-
     def test_polygamma(self):
         def test(use_double=False):
             cpu_tensor = torch.randn(10, 10, 10)
@@ -1585,14 +1521,10 @@ class TestCuda(TestCase):
             self.assertEqual(a, b.cuda())
 
     def test_diagonal(self):
-        TestTorch._test_diagonal(self, dtype=torch.float32, device='cuda')
+        TestTorch._test_diagonal(self, dtype=torch.cuda.float32)
 
     def test_diagflat(self):
-        TestTorch._test_diagflat(self, dtype=torch.float32, device='cuda')
-
-    @unittest.skipIf(not HAS_MAGMA, "no MAGMA library detected")
-    def test_trtrs(self):
-        TestTorch._test_trtrs(self, lambda t: t.cuda())
+        TestTorch._test_diagflat(self, dtype=torch.cuda.float32)
 
     @unittest.skipIf(torch.cuda.device_count() < 2, "only one GPU detected")
     def test_get_set_rng_state_all(self):
@@ -1610,21 +1542,6 @@ class TestCuda(TestCase):
         torch.cuda.nvtx.range_push("foo")
         torch.cuda.nvtx.mark("bar")
         torch.cuda.nvtx.range_pop()
-
-    def test_random_neg_values(self):
-        TestTorch._test_random_neg_values(self, use_cuda=True)
-
-    def test_overlapped_indices(self):
-        a = torch.arange(0, 128).view(32, 4).cuda()
-        b = torch.arange(0, 128).view(32, 4).cuda()
-        b = b.set_(b.storage(), storage_offset=0, size=(65, 64), stride=(1, 1))
-        b += 5
-        b = b.set_(b.storage(),
-                   storage_offset=0,
-                   size=a.size(),
-                   stride=a.stride())
-        a += 5
-        self.assertEqual(a, b)
 
 
 def load_ignore_file():
@@ -1690,17 +1607,4 @@ if __name__ == '__main__':
     if HAS_CUDA:
         load_ignore_file()
         generate_tests()
-
-    # skip TestTorch tests
-    # hide in __name__ == '__main__' because we don't want this to be run when
-    # someone imports test_cuda
-    def load_tests(loader, tests, pattern):
-        test_suite = unittest.TestSuite()
-        for test_group in tests:
-            for test in test_group:
-                if test.__class__.__name__ == 'TestTorch':
-                    continue
-                test_suite.addTest(test)
-        return test_suite
-
     run_tests()

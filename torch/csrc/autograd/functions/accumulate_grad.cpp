@@ -30,26 +30,25 @@ auto AccumulateGrad::apply(const variable_list& grads) -> variable_list {
     new_grad = (*hook)({new_grad})[0];
   }
 
-  at::Tensor& grad = variable.grad();
+  auto& grad = variable.grad();
   if (!grad.defined()) {
     variable.grad() = new_grad.clone();
   } else if (!GradMode::is_enabled()) {
-    Variable& grad_variable = as_variable_ref(grad);
     // This case is not strictly necessary, but it makes the first-order only case
     // slightly more efficient and, what's more important, more predictable for
     // the users. Thanks to this case we can avoid changing the grad tensor,
     // a thing never promised and documented, but used in some hacks seen
     // on the internet.
-    if (grad_variable.type().is_sparse() && !new_grad.type().is_sparse()) {
-      grad_variable.data() = new_grad.data() + grad_variable.data();
+    if (grad.type().is_sparse() && !new_grad.type().is_sparse()) {
+      grad.data() = new_grad.data() + grad.data();
     } else {
-      grad_variable.data() += new_grad.data();
+      grad.data() += new_grad.data();
     }
   } else {
     variable.grad() = grad + new_grad;
   }
 
   return variable_list();
-}
+};
 
 }} // namespace torch::autograd

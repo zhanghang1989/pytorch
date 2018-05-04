@@ -63,7 +63,7 @@ virtual ${return_type} ${method_prefix_derived}${api_name}(${type_method_formals
 """)
 TYPE_METHOD_DEFINITION_ABSTRACT = CodeTemplate("""\
 ${return_type} Type::${method_prefix_derived}${api_name}(${type_method_formals}) const {
-    AT_ERROR("${method_prefix_derived}${api_name} is not implemented for type ", toString());
+    runtime_error("${method_prefix_derived}${api_name} is not implemented for type %s", toString());
 }
 """)
 TYPE_METHOD_DECLARATION_CONCRETE = CodeTemplate("""\
@@ -130,7 +130,7 @@ if (${check_name}.dim() == 0) {
 }""")
 
 ZERO_DIM_ONLY = CodeTemplate("""\
-AT_ERROR("${api_name} only supports a 0-dimensional ${check_name} tensor, but got tensor "
+runtime_error("${api_name} only supports a 0-dimensional ${check_name} tensor, but got tensor "
     "with %" PRId64 " dimension(s)", ${check_name}.dim());
 """)
 
@@ -233,22 +233,14 @@ CHECKED_CAST = {
     'THGenerator*':
         CodeTemplate(
             'check_generator<${Backend}Generator>(${arg_name}, &context->defaultGenerator(backend()))'),
-    # This is a cast done via direct-construction
-    'THSize*': CodeTemplate('THLongStorageView ${result_name}(${arg_name}, THLongStorageViewKind::SIZE);'),
-    # This is a cast done via direct-construction
-    'THStride*':
-        CodeTemplate(
-            'THLongStorageView ${result_name}(${arg_name}, '
-            '${noelem_to_empty} ? '
-            'THLongStorageViewKind::STRIDE_EMPTY_TENSOR : THLongStorageViewKind::STRIDE_SCALAR);'),
+    'THSize*': CodeTemplate('THLongStorageView::makeFromSize(${arg_name})'),
+    'THStride*': CodeTemplate('THLongStorageView::makeFromStride(${arg_name}, ${noelem_to_empty})'),
     'real': CodeTemplate('${arg_name}.to${ScalarName}()'),
     'accreal': CodeTemplate('${arg_name}.to${AccScalarName}()'),
     'TensorList': CodeTemplate('tensor_list_checked_cast<${Tensor}, Tensor, '
                                '${THTensor}>(${arg_name},"${arg_name}",${arg_pos})'),
     'IntList': CodeTemplate('check_intlist<${size}>(${arg_name}, "${arg_name}", ${arg_pos}${,default_init})')
 }
-
-DIRECT_CONSTRUCTION_CHECKED_CAST = {'THSize*', 'THStride*'}
 
 CHECKED_USE = {
     'THTensor*': '{}_->tensor',
@@ -279,7 +271,7 @@ ALLOC_WRAP = {
 CONSTANT_REPLACEMENTS = [
     ('AS_REAL', '${AS_REAL}'),
     ('__storage_size.get\\(\\)',
-     'THLongStorageView(static_cast<int64_t>(storage.size()), THLongStorageViewKind::LENGTH)'),
+     'THLongStorageView::makeFromLength(static_cast<int64_t>(storage.size()))'),
     ('__last_dim', 'self.ndimension()-1'),
 ]
 
@@ -416,7 +408,6 @@ FunctionOption = TypedDict('FunctionOption', {
     'formals_list': List[AtFormal],
     'condition': str,
     'auto_gpu': bool,
-    'with_gil': bool,
     'cpu_half': bool,
     # options should be List[FunctionOption]
     'options': Any,
@@ -449,8 +440,6 @@ OutputDeclaration = NamedTuple('OutputDeclaration', [
     ('returns', List[ReturnType]),
     ('inplace', bool),
     ('abstract', bool),
-    ('auto_gpu', bool),
-    ('with_gil', bool),
 ])
 
 
@@ -788,8 +777,6 @@ def create_generic(top_env, declarations):
             inplace=option['inplace'],
             # See Note [Abstract ATen methods]
             abstract=abstract,
-            auto_gpu=option.get('auto_gpu', True),
-            with_gil=option.get('with_gil', False),
         ))
 
     def native_get_formals(option, include_constants=False):
@@ -992,8 +979,6 @@ def create_generic(top_env, declarations):
             inplace=option['inplace'],
             # See Note [Abstract ATen methods]
             abstract=abstract,
-            auto_gpu=option.get('auto_gpu', True),
-            with_gil=option.get('with_gil', False),
         ))
 
     output_declarations = []  # type: List[OutputDeclaration]
@@ -1094,18 +1079,14 @@ def create_derived(backend_type_env, declarations):
             return backend_type_env['AccScalarName'] == 'Long'
         return False
 
+    def get_zero_dim_dispatch_when_scalar(option):
+        # type: (FunctionOption) -> str
+        return option.get('zero_dim_dispatch_when_scalar', False)  # type: ignore
+
     def handle_zero_dim(env, option):
         # type: (Environment, FunctionOption) -> List[str]
-        zero_dim_dispatch = option.get('zero_dim_dispatch_when_scalar', '')
+        zero_dim_dispatch = get_zero_dim_dispatch_when_scalar(option)
         if not zero_dim_dispatch:
-            return []
-        broadcasts_arg = zero_dim_dispatch in option.get('broadcast_actuals', '')
-        zero_dim_only = option.get('zero_dim_tensor_only', False)
-        # this combination doesn't seem to make sense
-        assert not (broadcasts_arg and zero_dim_only)
-        # if the argument broadcasts, then this would only affect cases where all broadcasted
-        # tensors were zero-dim, which is inconsistent with the scalar handling.
-        if broadcasts_arg:
             return []
         zero_dim_actuals = [arg['name']
                             if arg['name'] != zero_dim_dispatch else "Scalar({})".format(arg['name'])
@@ -1113,9 +1094,9 @@ def create_derived(backend_type_env, declarations):
         return [ZERO_DIM_CHECK.substitute(env, check_name=zero_dim_dispatch, zero_dim_actuals=zero_dim_actuals)]
 
     def handle_only_zero_dim(env, option):
-        # type: (Environment, FunctionOption) -> Optional[List[str]]
+        # type: (Environment, FunctionOption) -> List[str]
         if option.get('zero_dim_tensor_only', False):
-            check_name = option['zero_dim_dispatch_when_scalar']
+            check_name = get_zero_dim_dispatch_when_scalar(option)
             return [ZERO_DIM_ONLY.substitute(env, check_name=check_name)]
         else:
             return None
@@ -1250,21 +1231,13 @@ def create_derived(backend_type_env, declarations):
                         default_init.append(arg['default_init'])
 
                     noelem_to_empty = 'is_noelem_tensor_size(size)' if 'size' in seen_names else 'false'
-                    if arg['type'] in DIRECT_CONSTRUCTION_CHECKED_CAST:
-                        body.append(CHECKED_CAST[arg['type']].substitute(
-                            env, arg_name=arg['name'], arg_pos=count,
-                            null_okay=null_okay, default_init=default_init,
-                            size=arg.get('size'),
-                            noelem_to_empty=noelem_to_empty,
-                            result_name=arg['name'] + '_'))
-                    else:
-                        check_cast = CHECKED_CAST[arg['type']].substitute(
-                            env, arg_name=arg['name'], arg_pos=count,
-                            null_okay=null_okay, default_init=default_init,
-                            size=arg.get('size'),
-                            noelem_to_empty=noelem_to_empty)
-                        body.append("auto {}_ = {};".format(
-                            arg['name'], check_cast))
+                    check_cast = CHECKED_CAST[arg['type']].substitute(
+                        env, arg_name=arg['name'], arg_pos=count,
+                        null_okay=null_okay, default_init=default_init,
+                        size=arg.get('size'),
+                        noelem_to_empty=noelem_to_empty)
+                    body.append("auto {}_ = {};".format(
+                        arg['name'], check_cast))
                 if drop_argument(arg, option) or replace_with_null(arg):
                     body.append(
                         "(void) {}_; //silence unused warning".format(arg['name']))

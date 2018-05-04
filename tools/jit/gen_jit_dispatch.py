@@ -1,7 +1,7 @@
 import os
 import argparse
-from itertools import count, combinations
-from ..autograd.utils import CodeTemplate, write, uninplace_api_name
+from itertools import count
+from ..autograd.utils import CodeTemplate, write
 from ..autograd.gen_autograd import load_aten_declarations
 
 template_path = os.path.join(os.path.dirname(__file__), 'templates')
@@ -30,18 +30,11 @@ TYPE_CASTS = {
 }
 
 KW_ASSIGNMENT = CodeTemplate("""\
-auto ${name} = ${type_cast}(node->${method}(Symbol::attr("${name}")));\
+auto ${name} = ${type_cast}(node->${method}(Symbol("${name}")));\
 """)
 
 POS_ASSIGNMENT = CodeTemplate("""\
 auto ${name} = tensor_as<${type}>(std::move(peek(stack, ${i}, ${N})));\
-""")
-
-POS_INTLIST_ASSIGNMENT = CodeTemplate("""\
-auto ${name}_tensor = peek(stack, ${i}, ${N});
-if (${name}_tensor.dim() == 0)
-    ${name}_tensor = ${name}_tensor.expand(${size});
-auto ${name} = tensor_as<at::IntList>(std::move(${name}_tensor));\
 """)
 
 CALL_NAMESPACE = CodeTemplate("at::${name}(${args})")
@@ -58,7 +51,7 @@ CONSTRUCTOR = CodeTemplate("""\
     drop(stack, ${num_dynamic_inputs});
     pack(stack, std::move(result));
     return 0;
-  }, "${name}", ${num_dynamic_inputs}, ${num_outputs});
+  }, "${name}", ${num_dynamic_inputs});
 }},
 """)
 
@@ -75,8 +68,6 @@ def is_jit_op(decl):
             not any(arg['simple_type'] == 'Generator' for arg in decl['arguments']) and
             not any(arg['simple_type'] == 'SparseTensor' for arg in decl['arguments']) and
             not any(arg['simple_type'] == 'Storage' for arg in decl['arguments']) and
-            not any(arg['simple_type'] == 'ScalarType' for arg in decl['arguments']) and
-            not any(arg['simple_type'] == 'optional<ScalarType>' for arg in decl['arguments']) and
             not any(arg['simple_type'] == 'Type' for arg in decl['arguments']) and
             uses_tensors)
 
@@ -98,17 +89,13 @@ def gen_jit_dispatch(declarations, out):
     def is_tensor_arg(arg):
         return arg['simple_type'] in {'Tensor', 'TensorList'}
 
-    def is_sized_intlist_arg(arg):
-        """Returns True for arguments declared as IntList[k], but False for IntList."""
-        return (arg['simple_type'] == 'IntList') and ('size' in arg)
-
     def get_invocation(decl, args):
         if 'namespace' in decl['method_of']:
             return CALL_NAMESPACE.substitute(name=decl['name'], args=args)
         else:
             return CALL_METHOD.substitute(name=decl['name'], first=args[0], args=args[1:])
 
-    def emit_decl_variant(decl, is_positional_arg, has_tensorlist, override_types=None):
+    def emit_decl_variant(decl, is_positional_arg, has_tensorlist):
         # is_positional_arg is a boolean list the same length as decl['arguments']
         # that indicates if the argument should come from the postional list
         # of inputs. If false, the argument comes from the constant attributes
@@ -116,7 +103,6 @@ def gen_jit_dispatch(declarations, out):
         attr_names = []
         pos_assignments = []
         arguments = []
-        override_types = override_types or {}
 
         if has_tensorlist:
             kw_assignments.append('size_t varargs_length = node->inputs().size();')
@@ -138,30 +124,19 @@ def gen_jit_dispatch(declarations, out):
             elif is_tensor_arg(arg):
                 arguments.append('std::move(peek(stack, {}, {}))'.format(next(real_inputs), static_inputs))
             elif is_positional_arg[i]:
-                template_kwargs = dict(type=arg['simple_type'],
-                                       name=arg['name'],
-                                       i=next(real_inputs),
-                                       N=static_inputs)
-
-                if is_sized_intlist_arg(arg):
-                    assign = POS_INTLIST_ASSIGNMENT.substitute(size=arg['size'],
-                                                               **template_kwargs)
-                else:
-                    assign = POS_ASSIGNMENT.substitute(**template_kwargs)
-
+                assign = POS_ASSIGNMENT.substitute(type=arg['simple_type'],
+                                                   name=arg['name'],
+                                                   i=next(real_inputs),
+                                                   N=static_inputs)
                 pos_assignments.append(assign)
                 arguments.append(arg['name'])
             else:
-                simple_type = override_types.get(arg['name'], arg['simple_type'])
-
-                attr_method = ATTR_METHOD_MAP[simple_type]
-                assign = KW_ASSIGNMENT.substitute(type_cast=TYPE_CASTS.get(simple_type, simple_type),
+                assign = KW_ASSIGNMENT.substitute(type_cast=TYPE_CASTS.get(arg['simple_type'], arg['simple_type']),
                                                   name=arg['name'],
-                                                  method=attr_method)
+                                                  method=ATTR_METHOD_MAP[arg['simple_type']])
                 kw_assignments.append(assign)
-                attr_names.append('{}_{}'.format(arg['name'], attr_method))
+                attr_names.append(arg['name'])
                 arguments.append(arg['name'])
-
         call = get_invocation(decl, arguments)
 
         # Descriptor is a unique identifier for a particular overload of an op.
@@ -178,22 +153,11 @@ def gen_jit_dispatch(declarations, out):
                    for idx in skip_scalar_overload[descriptor]):
                 return
 
-        returns = decl['returns']
-        all_scalars = all(r['dynamic_type'] != 'TensorList' for r in returns)
-        num_outputs = str(len(returns)) if all_scalars else 'UNKNOWN_OUTPUTS'
-
-        # special case for chunk when the chunks=<const> is known
-        # DO NOT ADD MORE SPECIAL CASES HERE, REFACTOR INTO A FUNCTION IF
-        # NEEDED
-        if decl['name'] == 'chunk' and 'chunks_i' in attr_names:
-            num_outputs = 'node->i(Symbol::attr("chunks"))'
-
         constructor = CONSTRUCTOR.substitute(descriptor=descriptor, name=decl['name'],
                                              call=call,
                                              kw_assignments=kw_assignments,
                                              pos_assignments=pos_assignments,
-                                             num_dynamic_inputs=num_dynamic_inputs,
-                                             num_outputs=num_outputs)
+                                             num_dynamic_inputs=num_dynamic_inputs)
 
         assert descriptor not in ops, descriptor
         ops[descriptor] = constructor
@@ -217,18 +181,9 @@ def gen_jit_dispatch(declarations, out):
         all_arguments_are_inputs = tuple(True for _ in arguments)
         only_tensors_are_inputs = tuple(is_tensor_arg(arg) for arg in arguments)
 
-        sized_intlist_args = [a['name'] for a in arguments if is_sized_intlist_arg(a)]
-        overrides_powerset = ({name: 'int64_t' for name in c}
-                              for r in range(len(sized_intlist_args) + 1)
-                              for c in combinations(sized_intlist_args, r))
-
         # NB: if there are no scalar args then both options on LHS are equivalent, so deduplicate them.
-        for variant in {all_arguments_are_inputs, only_tensors_are_inputs}:
-            if variant is only_tensors_are_inputs:
-                for override in overrides_powerset:
-                    emit_decl_variant(decl, variant, has_tensorlist, override)
-            else:
-                emit_decl_variant(decl, variant, has_tensorlist)
+        for variant in set([all_arguments_are_inputs, only_tensors_are_inputs]):
+            emit_decl_variant(decl, variant, has_tensorlist)
 
     # We need to add methods implemented manually in TensorImpl
     tensor_impl_methods = [{
@@ -236,7 +191,6 @@ def gen_jit_dispatch(declarations, out):
         'api_name': name,
         'method_of': ['Tensor'],
         'arguments': [{'name': 'self', 'simple_type': 'Tensor'}],
-        'returns': [{'name': 'result', 'type': 'int64_t', 'dynamic_type': 'int64_t'}],
     } for name in ['sizes', 'strides', 'dim']]
     aten_decls = load_aten_declarations(declarations) + tensor_impl_methods
     jit_decls = [d for d in aten_decls if is_jit_op(d)]
@@ -249,22 +203,9 @@ def gen_jit_dispatch(declarations, out):
     write(out, 'aten_dispatch.h', ATEN_DISPATCH_H, env)
     write(out, 'aten_dispatch.cpp', ATEN_DISPATCH_CPP, env)
 
-    # NB: Operate on aten_decls, not jit_decls, because VariableType is
-    # a client for these symbols as well
-    # NB: This means we DON'T generate interned strings for inplace ops.
-    # Change this when you do!
-    # NB: Keep this code synchronized with the code in
-    # tool/autograd/gen_variable_type.py
-    # NB: Some operations have inplace versions, but NOT non-inplace
-    # versions! Thus uninplace_api_name() is mandatory (if you remove
-    # it, you will get missing symbols.)
-    names = set(uninplace_api_name(decl['api_name']) for decl in aten_decls)
-    # NB: This grabs non keyword arguments too, but it's harmless
-    attrs = set(arg['name'] for decl in aten_decls for arg in decl['arguments'])
-    strings_env = {
-        'aten_symbols': ["_(aten, {}) \\".format(n) for n in sorted(names)],
-        'attr_symbols': ["_(attr, {}) \\".format(n) for n in sorted(attrs)]
-    }
+    names = set(decl['name'] for decl in jit_decls)
+    strings_env = {'aten_symbols': ["_({}) \\".format(n) for n in sorted(names)]}
+
     write(out, 'aten_interned_strings.h', ATEN_INTERNED_STRINGS_H, strings_env)
 
 

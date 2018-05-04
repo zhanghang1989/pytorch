@@ -16,7 +16,7 @@ class Pareto(TransformedDistribution):
 
     Example::
 
-        >>> m = Pareto(torch.tensor([1.0]), torch.tensor([1.0]))
+        >>> m = Pareto(torch.Tensor([1.0]), torch.Tensor([1.0]))
         >>> m.sample()  # sample from a Pareto distribution with scale=1 and alpha=1
          1.5623
         [torch.FloatTensor of size 1]
@@ -25,13 +25,13 @@ class Pareto(TransformedDistribution):
         scale (float or Tensor): Scale parameter of the distribution
         alpha (float or Tensor): Shape parameter of the distribution
     """
-    arg_constraints = {'alpha': constraints.positive, 'scale': constraints.positive}
+    params = {'alpha': constraints.positive, 'scale': constraints.positive}
 
-    def __init__(self, scale, alpha, validate_args=None):
+    def __init__(self, scale, alpha):
         self.scale, self.alpha = broadcast_all(scale, alpha)
         base_dist = Exponential(self.alpha)
         transforms = [ExpTransform(), AffineTransform(loc=0, scale=self.scale)]
-        super(Pareto, self).__init__(base_dist, transforms, validate_args=validate_args)
+        super(Pareto, self).__init__(base_dist, transforms)
 
     @property
     def mean(self):

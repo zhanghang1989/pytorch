@@ -2,7 +2,6 @@
 #include "common.h"
 #include "THCHalf.h"
 #include "THCHalfAutoNumerics.cuh"
-#include "THCTensor.hpp"
 
 #include "THCDeviceTensor.cuh"
 #include "THCDeviceTensorUtils.cuh"

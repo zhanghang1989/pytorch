@@ -1,5 +1,5 @@
 #ifndef NO_PYTHON
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #endif
 #include "ir.h"
 
@@ -23,12 +23,17 @@ namespace py = pybind11;
 
 namespace torch { namespace jit {
 
-std::string getPythonName(const PyObject* obj_) {
+std::string getPythonName(const PyObject* obj, bool is_legacy) {
   AutoGIL gil;
-  PyObject* obj = const_cast<PyObject*>(obj_);
-  auto v = py::getattr(obj, "__name__", py::str("<python_value>"));
-  // if this was a autograd.Function recover the name of the class
-  return py::str(v);
+  if (is_legacy) {
+    return std::string(obj->ob_type->tp_name);
+  } else {
+    // NB: hypothetically __name__ could mutate the Python
+    // object in a externally visible way. Please don't!
+    auto wobj = const_cast<PyObject*>(obj);
+    THPObjectPtr name{PyObject_GetAttrString(wobj, "__name__")};
+    return THPUtils_unpackString(name.get());
+  }
 }
 
 std::ostream& printPyObject(std::ostream & out, const THPObjectPtr& obj) {
@@ -70,40 +75,15 @@ std::ostream& printPyObject(std::ostream & out, const THPObjectPtr& obj) {
   }
 }
 
-at::optional<THPObjectPtr> PythonOp::autogradFunction() const {
-  AutoGIL gil;
-  py::handle obj = const_cast<PyObject*>(pyobj.get());
-
-  auto r = py::getattr(obj, "__self__", py::none());
-  if(r.is_none())
-    return at::nullopt;
-
-  auto apply = py::getattr(r, "apply", py::none());
-  if(apply.is_none())
-    return at::nullopt;
-
-  auto c = PyObject_RichCompareBool(apply.ptr(), obj.ptr(), Py_NE);
-  if(PyErr_Occurred())
-    throw py::error_already_set();
-  if(c)
-    return at::nullopt;
-
-  return THPObjectPtr(r.release().ptr());
-}
-
 std::string PythonOp::name() const {
-  AutoGIL gil;
-  if(auto autograd = autogradFunction()) {
-    return getPythonName(autograd->get());
-  } else {
-    return getPythonName(pyobj.get());
-  }
+  return getPythonName(pyobj.get(),is_legacy);
 }
 
 void PythonOp::cloneFrom(Node * other_) {
   Node::cloneFrom(other_);
   auto other = other_->cast<PythonOp>();
   this->cconv = other->cconv;
+  this->is_legacy = other->is_legacy;
   Py_INCREF(other->pyobj.get());
   this->pyobj = THPObjectPtr(other->pyobj.get());
   this->var_flags = other->var_flags;
@@ -136,10 +116,6 @@ std::string PythonOp::name() const {
 
 
 namespace torch { namespace jit {
-
-// Sigh, see https://stackoverflow.com/questions/8016780/undefined-reference-to-static-constexpr-char
-constexpr Symbol CppOp::Kind;
-constexpr Symbol PythonOp::Kind;
 
 constexpr int max_tensor_display_size = 10;
 
@@ -214,11 +190,7 @@ void printAttributes(std::ostream & out, const Node * n) {
   for(auto name : names) {
     if(i++ > 0)
       out << ", ";
-    // TODO: debugging mode to see the qualifier.  We definitely
-    // don't want to print the qualifier since it should always
-    // be attribute, but you might be able to track down a weird
-    // bug by printing it out.
-    out << name.toUnqualString() <<"=";
+    out << name.toString() <<"=";
     switch(n->kindOf(name)) {
       case AttributeKind::f:
         out << n->f(name);
@@ -301,15 +273,15 @@ std::ostream& printNode(std::ostream & out, size_t level, const Node * n, std::v
   IR_ELSEIFM_CONST(CppOp)
     out << "CppOp[" << value->name() << "]";
   IR_ELSE()
-    if(n->hasAttribute(attr::Subgraph)) {
+    if(n->hasAttribute(kSubgraph)) {
       if(groups) {
-        out << n->kind().toQualString() << "_" << groups->size();
+        out << n->kind().toString() << "_" << groups->size();
         groups->push_back(n);
       } else {
-        out << n->kind().toQualString() << "[" << *n->g(attr::Subgraph) << "]";
+        out << n->kind().toString() << "[" << *n->g(kSubgraph) << "]";
       }
     } else {
-      out << n->kind().toQualString();
+      out << n->kind().toString();
       if(n->hasAttributes()) {
         printAttributes(out,n);
       }
@@ -354,7 +326,7 @@ std::ostream& operator<<(std::ostream & out, const Graph & g) {
   out << "  return (" << g.outputs() << ");\n}\n";
   size_t i = 0;
   for(auto fg : groups) {
-    out << "with " << fg->kind().toQualString() << "_" <<i++ << " = " << *fg->g(attr::Subgraph);
+    out << "with " << fg->kind().toString() << "_" <<i++ << " = " << *fg->g(kSubgraph);
   }
   /*
   // Uncomment this to debug all_nodes issues
@@ -472,7 +444,7 @@ void Node::lint() const {
   IR_ELSEIF(FusionGroup)
     checkSameDevice(value);
     // TODO: Typecheck the parameters
-    value->g(attr::Subgraph)->lint();
+    value->g(kSubgraph)->lint();
   IR_END()
 
 }
@@ -568,16 +540,16 @@ void Graph::lint() const {
     void check_block(const Block *b) {
       for (auto input : b->inputs()) {
         check_value(input);
-        JIT_ASSERT(input->node()->kind_ == prim::Param);
+        JIT_ASSERT(input->node()->kind_ == kParam);
       }
 
       for (auto n : b->nodes()) {
-        JIT_ASSERT(n->kind_ != prim::Param);
-        JIT_ASSERT(n->kind_ != prim::Return);
+        JIT_ASSERT(n->kind_ != kParam);
+        JIT_ASSERT(n->kind_ != kReturn);
         check_node(n);
       }
 
-      JIT_ASSERT(b->output_->kind() == prim::Return);
+      JIT_ASSERT(b->output_->kind() == kReturn);
       check_node(b->output_);
 
       // all_nodes
@@ -664,41 +636,6 @@ std::shared_ptr<Graph> Graph::copy() {
   };
   new_g->block()->cloneFrom(this->block(), env);
   return new_g;
-}
-
-inline Value* Value::setUniqueName(const std::string & name) {
-  if (name.size() > 0 && name.find_first_not_of("0123456789") == std::string::npos) {
-    throw std::runtime_error("names may not be integers: " + name);
-  }
-
-  auto & names = node()->owningGraph()->unique_names_;
-
-  // clear any old name from the map
-  if(hasUniqueName()) {
-    names.erase(unique_name_);
-    unique_name_ = "";
-  }
-
-  // allow "" to clear the uniquename
-  if(name == "")
-    return this;
-
-  // if someone else has this name, then rename the other value
-  auto old_owner_of_name = names.find(name);
-  if(old_owner_of_name != names.end()) {
-    size_t suffix = 1;
-    std::string replacement_name;
-    do {
-      std::stringstream ss;
-      ss << name << "." << suffix++;
-      replacement_name = ss.str();
-    } while(names.count(replacement_name) > 0);
-    old_owner_of_name->second->setUniqueName(replacement_name);
-  }
-
-  names[name] = this;
-  unique_name_ = name;
-  return this;
 }
 
 }} // namespace torch::jit

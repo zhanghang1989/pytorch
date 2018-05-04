@@ -1,5 +1,4 @@
-#include "THCSTensor.hpp"
-#include "THCTensor.hpp"
+#include "THCSTensor.h"
 #include "THCApply.cuh"
 #include "THCTensorSort.cuh"
 #include "THCTensorMathPointwise.cuh"

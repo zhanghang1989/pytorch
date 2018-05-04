@@ -35,7 +35,7 @@ taking action :math:`a` in state :math:`s` given policy :math:`\pi^\theta`.
 
 In practice we would sample an action from the output of a network, apply this
 action in an environment, and then use ``log_prob`` to construct an equivalent
-loss function. Note that we use a negative because optimizers use gradient
+loss function. Note that we use a negative because optimisers use gradient
 descent, whilst the rule above assumes gradient ascent. With a categorical
 policy, the code for implementing REINFORCE would be as follows::
 
@@ -69,6 +69,7 @@ derivative would be as follows::
 
 from .bernoulli import Bernoulli
 from .beta import Beta
+from .transforms import *
 from .binomial import Binomial
 from .categorical import Categorical
 from .cauchy import Cauchy
@@ -76,19 +77,16 @@ from .chi2 import Chi2
 from .constraint_registry import biject_to, transform_to
 from .dirichlet import Dirichlet
 from .distribution import Distribution
-from .exp_family import ExponentialFamily
 from .exponential import Exponential
+from .exp_family import ExponentialFamily
 from .fishersnedecor import FisherSnedecor
 from .gamma import Gamma
 from .geometric import Geometric
 from .gumbel import Gumbel
-from .independent import Independent
 from .kl import kl_divergence, register_kl
 from .laplace import Laplace
 from .log_normal import LogNormal
-from .logistic_normal import LogisticNormal
 from .multinomial import Multinomial
-from .multivariate_normal import MultivariateNormal
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
@@ -97,7 +95,6 @@ from .relaxed_bernoulli import RelaxedBernoulli
 from .relaxed_categorical import RelaxedOneHotCategorical
 from .studentT import StudentT
 from .transformed_distribution import TransformedDistribution
-from .transforms import *
 from .uniform import Uniform
 
 __all__ = [
@@ -115,12 +112,9 @@ __all__ = [
     'Gamma',
     'Geometric',
     'Gumbel',
-    'Independent',
     'Laplace',
     'LogNormal',
-    'LogisticNormal',
     'Multinomial',
-    'MultivariateNormal',
     'Normal',
     'OneHotCategorical',
     'Pareto',

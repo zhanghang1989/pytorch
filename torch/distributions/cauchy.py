@@ -15,7 +15,7 @@ class Cauchy(Distribution):
 
     Example::
 
-        >>> m = Cauchy(torch.tensor([0.0]), torch.tensor([1.0]))
+        >>> m = Cauchy(torch.Tensor([0.0]), torch.Tensor([1.0]))
         >>> m.sample()  # sample from a Cauchy distribution with loc=0 and scale=1
          2.3214
         [torch.FloatTensor of size 1]
@@ -24,25 +24,25 @@ class Cauchy(Distribution):
         loc (float or Tensor): mode or median of the distribution.
         scale (float or Tensor): half width at half maximum.
     """
-    arg_constraints = {'loc': constraints.real, 'scale': constraints.positive}
+    params = {'loc': constraints.real, 'scale': constraints.positive}
     support = constraints.real
     has_rsample = True
 
-    def __init__(self, loc, scale, validate_args=None):
+    def __init__(self, loc, scale):
         self.loc, self.scale = broadcast_all(loc, scale)
         if isinstance(loc, Number) and isinstance(scale, Number):
             batch_shape = torch.Size()
         else:
             batch_shape = self.loc.size()
-        super(Cauchy, self).__init__(batch_shape, validate_args=validate_args)
+        super(Cauchy, self).__init__(batch_shape)
 
     @property
     def mean(self):
-        return self.loc.new_tensor(float('nan')).expand(self._extended_shape())
+        return self.loc.new([float('nan')]).expand(self._extended_shape())
 
     @property
     def variance(self):
-        return self.loc.new_tensor(float('inf')).expand(self._extended_shape())
+        return self.loc.new([float('inf')]).expand(self._extended_shape())
 
     def rsample(self, sample_shape=torch.Size()):
         shape = self._extended_shape(sample_shape)
@@ -50,18 +50,15 @@ class Cauchy(Distribution):
         return self.loc + eps * self.scale
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         return -math.log(math.pi) - self.scale.log() - (1 + ((value - self.loc) / self.scale)**2).log()
 
     def cdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         return torch.atan((value - self.loc) / self.scale) / math.pi + 0.5
 
     def icdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         return torch.tan(math.pi * (value - 0.5)) * self.scale + self.loc
 
     def entropy(self):

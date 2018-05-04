@@ -2,7 +2,6 @@
 // port from Caffe
 
 #include "THCUNN.h"
-#include "THCTensor.hpp"
 #include "THCDeviceTensor.cuh"
 #include "THCDeviceTensorUtils.cuh"
 #include "THCNumerics.cuh"

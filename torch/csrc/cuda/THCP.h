@@ -1,7 +1,7 @@
 #ifndef THCP_H
 #define THCP_H
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <TH/TH.h>
 #include <THC/THC.h>
 #include <THC/THCHalf.h>

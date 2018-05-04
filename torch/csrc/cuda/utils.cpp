@@ -1,4 +1,4 @@
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <stdarg.h>
 #include <string>
 #include "THCP.h"

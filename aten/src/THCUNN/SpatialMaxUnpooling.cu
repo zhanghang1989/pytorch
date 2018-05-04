@@ -1,5 +1,4 @@
 #include "THCUNN.h"
-#include "THCTensor.hpp"
 #include "common.h"
 
 template <typename Dtype>

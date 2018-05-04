@@ -1,6 +1,5 @@
 #include "THCUNN.h"
 #include "common.h"
-#include "THCTensor.hpp"
 
 #include "THCThrustAllocator.cuh"
 #include <thrust/device_ptr.h>

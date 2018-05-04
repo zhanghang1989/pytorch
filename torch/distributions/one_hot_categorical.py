@@ -1,4 +1,5 @@
 import torch
+from torch.autograd import Variable
 from torch.distributions import constraints
 from torch.distributions.categorical import Categorical
 from torch.distributions.distribution import Distribution
@@ -18,7 +19,7 @@ class OneHotCategorical(Distribution):
 
     Example::
 
-        >>> m = OneHotCategorical(torch.tensor([ 0.25, 0.25, 0.25, 0.25 ]))
+        >>> m = OneHotCategorical(torch.Tensor([ 0.25, 0.25, 0.25, 0.25 ]))
         >>> m.sample()  # equal probability of 0, 1, 2, 3
          0
          0
@@ -30,15 +31,15 @@ class OneHotCategorical(Distribution):
         probs (Tensor): event probabilities
         logits (Tensor): event log probabilities
     """
-    arg_constraints = {'probs': constraints.simplex}
+    params = {'probs': constraints.simplex}
     support = constraints.simplex
     has_enumerate_support = True
 
-    def __init__(self, probs=None, logits=None, validate_args=None):
+    def __init__(self, probs=None, logits=None):
         self._categorical = Categorical(probs, logits)
         batch_shape = self._categorical.batch_shape
         event_shape = self._categorical.param_shape[-1:]
-        super(OneHotCategorical, self).__init__(batch_shape, event_shape, validate_args=validate_args)
+        super(OneHotCategorical, self).__init__(batch_shape, event_shape)
 
     def _new(self, *args, **kwargs):
         return self._categorical._new(*args, **kwargs)
@@ -73,8 +74,7 @@ class OneHotCategorical(Distribution):
         return one_hot.scatter_(-1, indices, 1)
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         indices = value.max(-1)[1]
         return self._categorical.log_prob(indices)
 
@@ -84,6 +84,6 @@ class OneHotCategorical(Distribution):
     def enumerate_support(self):
         n = self.event_shape[0]
         values = self._new((n, n))
-        torch.eye(n, out=values.data)
+        torch.eye(n, out=values.data if isinstance(values, Variable) else values)
         values = values.view((n,) + (1,) * len(self.batch_shape) + (n,))
         return values.expand((n,) + self.batch_shape + (n,))

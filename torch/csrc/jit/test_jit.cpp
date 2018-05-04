@@ -1,15 +1,6 @@
 #ifndef NO_PYTHON
-#include "torch/csrc/python_headers.h"
-
-#define REQUIRE JIT_ASSERT
-
-#else
-
-#define CATCH_CONFIG_MAIN
-#include "catch.hpp"
-
+#include <Python.h>
 #endif
-
 #include "torch/csrc/jit/fusion_compiler.h"
 #include "torch/csrc/jit/code_template.h"
 #include "torch/csrc/jit/ir.h"
@@ -96,9 +87,9 @@ static void codeTemplateTest() {
     e.v("what",{"is","this"});
     TemplateEnv c(e);
     c.s("hi","foo2");
-    REQUIRE(e.s("hi") == "foo");
-    REQUIRE(c.s("hi") == "foo2");
-    REQUIRE(e.v("what")[0] == "is");
+    JIT_ASSERT(e.s("hi") == "foo");
+    JIT_ASSERT(c.s("hi") == "foo2");
+    JIT_ASSERT(e.v("what")[0] == "is");
   }
 
   {
@@ -112,7 +103,7 @@ static void codeTemplateTest() {
     auto s = ct.format(e);
     //std::cout << "'" << s << "'\n";
     //std::cout << "'" << ct_expect << "'\n";
-    REQUIRE(s == ct_expect);
+    JIT_ASSERT(s == ct_expect);
   }
 }
 
@@ -137,7 +128,7 @@ static void fusionTests() {
     auto o2 = a*b;
     float max_diff = (o2 - o).abs().max().toCDouble();
     //std::cout << "max diff: " << max_diff << "\n";
-    REQUIRE(max_diff == 0);
+    JIT_ASSERT(max_diff == 0);
   };
   testSimple();
 
@@ -195,9 +186,9 @@ static void fusionTests() {
 
     //auto out0 = inputs[0]*inputs[1];
     comp.debugLaunchGraph(graph, 0, inputs, outputs);
-    REQUIRE(out0.is_same_size(outputs.front()));
+    JIT_ASSERT(out0.is_same_size(outputs.front()));
     float max_diff = (outputs.front() - out0).abs().max().toCDouble();
-    REQUIRE(max_diff < 1e-6);
+    JIT_ASSERT(max_diff < 1e-6);
 
   };
   testOne(0,0,0,0);
@@ -229,9 +220,9 @@ static void fusionTests() {
     comp.debugLaunchGraph(graph, 0, {a,b}, {o, o2});
 
     float max_diff = (o_r - o).abs().max().toCDouble();
-    REQUIRE(max_diff == 0);
+    JIT_ASSERT(max_diff == 0);
     float max_diff2 = (o2_r - o2).abs().max().toCDouble();
-    REQUIRE(max_diff2 == 0);
+    JIT_ASSERT(max_diff2 == 0);
   };
   testConcat(0);
   testConcat(1);
@@ -241,62 +232,44 @@ static void fusionTests() {
 struct Attr : public Attributes<Attr> {
 };
 void attributesTest() {
-  auto one = attr::alpha;
-  auto two = attr::device;
-  auto three = attr::end;
-  auto four = attr::perm;
+  auto one = kParam;
+  auto two = kReturn;
+  auto three = kConstant;
+  auto four = kSlice;
   Attr attr;
   attr.f_(one,3.4)->i_(two,5)->s_(three,"what");
-  REQUIRE(attr.f(one) == 3.4);
-  REQUIRE(attr.s(three) == "what");
-  REQUIRE(attr.i(two) == 5);
+  JIT_ASSERT(attr.f(one) == 3.4);
+  JIT_ASSERT(attr.s(three) == "what");
+  JIT_ASSERT(attr.i(two) == 5);
   attr.s_(one,"no");
-  REQUIRE(attr.s(one) == "no");
-  REQUIRE(attr.hasAttribute(three));
-  REQUIRE(!attr.hasAttribute(four));
+  JIT_ASSERT(attr.s(one) == "no");
+  JIT_ASSERT(attr.hasAttribute(three));
+  JIT_ASSERT(!attr.hasAttribute(four));
   attr.ss_(two, {"hi", "now"});
-  REQUIRE(attr.ss(two).at(1) == "now");
+  JIT_ASSERT(attr.ss(two).at(1) == "now");
 
   Attr attr2;
   attr2.copyAttributes(attr);
-  REQUIRE(attr2.s(one) == "no");
+  JIT_ASSERT(attr2.s(one) == "no");
   attr2.f_(one,5);
-  REQUIRE(attr.s(one) == "no");
-  REQUIRE(attr2.f(one) == 5);
+  JIT_ASSERT(attr.s(one) == "no");
+  JIT_ASSERT(attr2.f(one) == 5);
 }
 
 void internedStringsTests () {
 
-  REQUIRE(prim::Param == Symbol::prim("Param"));
-  REQUIRE(prim::Return == Symbol::prim("Return"));
-  REQUIRE(prim::Return.toUnqualString() == std::string("Return"));
-  REQUIRE(prim::Return.toQualString() == std::string("prim::Return"));
-  Symbol newsym = Symbol::aten("__NEW_SYMBOL");
-  size_t symstart = newsym;
-  REQUIRE(newsym.toQualString() == std::string("aten::__NEW_SYMBOL"));
-  // TODO: This test is a bit too close to the implementation details.
-  REQUIRE(Symbol::aten("What") == symstart+1);
-  REQUIRE(Symbol::aten("What2") == symstart+2);
-  REQUIRE(Symbol::aten("What") == symstart+1);
-  REQUIRE(Symbol::aten("What2") == symstart+2);
-  REQUIRE(Symbol(SymbolNamespace::aten, symstart+2).toUnqualString() == std::string("What2"));
+  JIT_ASSERT(kParam == Symbol("Param"));
+  JIT_ASSERT(kReturn == Symbol("Return"));
+  JIT_ASSERT(Symbol(kReturn).toString() == std::string("Return"));
+  size_t symstart = Symbol("__NEW_SYMBOL");
+  JIT_ASSERT(Symbol("What") == symstart+1);
+  JIT_ASSERT(Symbol("What2") == symstart+2);
+  JIT_ASSERT(Symbol("What") == symstart+1);
+  JIT_ASSERT(Symbol("What2") == symstart+2);
+  JIT_ASSERT(Symbol(symstart+2).toString() == std::string("What2"));
 }
 
-void fromQualStringTests() {
-  REQUIRE(Symbol::fromQualString("prim::Param") == Symbol::prim("Param"));
-  REQUIRE(Symbol::fromQualString("aten::mm") == Symbol::aten("mm"));
-  REQUIRE(Symbol::fromQualString("onnx::LSTM") == Symbol::onnx("LSTM"));
-  REQUIRE(Symbol::fromQualString("attr::value") == Symbol::attr("value"));
-  REQUIRE(Symbol::fromQualString("scope::") == Symbol::scope(""));
-  auto bad_inputs = {"scope", "foo::bar", "prim:Param", "::", ":", ""};
-  for (auto input : bad_inputs) {
-    try {
-      Symbol::fromQualString(input);
-      REQUIRE(0);
-    } catch (std::runtime_error c) {
-    }
-  }
-}
+
 
 at::Tensor t_use(at::Tensor x) {
   return x;
@@ -449,8 +422,8 @@ void interpTest() {
     std::tie(hx, cx) = lstm(input[0], hx, cx, w_ih, w_hh);
 
     //std::cout << almostEqual(outputs[0],hx) << "\n";
-    REQUIRE(exactlyEqual(outputs[0],hx));
-    REQUIRE(exactlyEqual(outputs[1],cx));
+    JIT_ASSERT(exactlyEqual(outputs[0],hx));
+    JIT_ASSERT(exactlyEqual(outputs[1],cx));
 }
 
 void interpStageTest() {
@@ -482,8 +455,8 @@ void interpStageTest() {
     std::tie(hx, cx) = lstm(input[0], hx, cx1, w_ih, w_hh);
 
     //std::cout << almostEqual(outputs[0],hx) << "\n";
-    REQUIRE(exactlyEqual(outputs[0],hx));
-    REQUIRE(exactlyEqual(outputs[1],cx));
+    JIT_ASSERT(exactlyEqual(outputs[0],hx));
+    JIT_ASSERT(exactlyEqual(outputs[1],cx));
 }
 
 using var_meta_type = std::vector<int64_t>;
@@ -522,7 +495,7 @@ variable_list get_grad_outputs(const variable_list& vars) {
 std::shared_ptr<Graph> trace(const ADTestSpec& test, const variable_list& vars_in) {
   std::shared_ptr<tracer::TracingState> state;
   variable_list trace_vars_in;
-  std::tie(state, trace_vars_in) = tracer::enter(vars_in, 1, true);
+  std::tie(state, trace_vars_in) = tracer::enter(fmap<tracer::TraceInput>(vars_in), 1);
   auto trace_vars_out = test(trace_vars_in);
   tracer::exit(trace_vars_out);
   return state->graph;
@@ -535,10 +508,10 @@ variable_list grad(const variable_list& outputs, const variable_list& inputs, co
 }
 
 void assertAllClose(const tensor_list& a, const tensor_list& b) {
-  REQUIRE(a.size() == b.size());
+  JIT_ASSERT(a.size() == b.size());
   for (std::size_t i = 0; i < a.size(); ++i) {
-    REQUIRE(a[i].is_same_size(b[i]));
-    REQUIRE(a[i].allclose(b[i]));
+    JIT_ASSERT(a[i].is_same_size(b[i]));
+    JIT_ASSERT(a[i].allclose(b[i]));
   }
 }
 
@@ -637,11 +610,11 @@ void testDifferentiate(std::ostream & out) {
   std::vector<std::size_t> expected_captured_outputs = {1};
   std::vector<std::size_t> expected_input_vjps = {0, 1};
   std::vector<std::size_t> expected_output_vjps = {0, 1};
-  REQUIRE(grad_spec.f_real_outputs == 1);
-  REQUIRE(grad_spec.df_input_captured_inputs == expected_captured_inputs);
-  REQUIRE(grad_spec.df_input_captured_outputs == expected_captured_outputs);
-  REQUIRE(grad_spec.df_input_vjps == expected_input_vjps);
-  REQUIRE(grad_spec.df_output_vjps == expected_output_vjps);
+  JIT_ASSERT(grad_spec.f_real_outputs == 1);
+  JIT_ASSERT(grad_spec.df_input_captured_inputs == expected_captured_inputs);
+  JIT_ASSERT(grad_spec.df_input_captured_outputs == expected_captured_outputs);
+  JIT_ASSERT(grad_spec.df_input_vjps == expected_input_vjps);
+  JIT_ASSERT(grad_spec.df_output_vjps == expected_output_vjps);
   out << "testDifferentiate\n";
   out << *grad_spec.f;
   out << *grad_spec.df;
@@ -664,11 +637,11 @@ void testDifferentiateWithRequiresGrad(std::ostream & out) {
   auto grad_spec = differentiate(graph, {true, false});
   std::vector<std::size_t> expected_input_vjps = {1, 2};  // for e and %4 = (d + a)
   std::vector<std::size_t> expected_output_vjps = {0};    // only a requires grad
-  REQUIRE(grad_spec.f_real_outputs == 2);              // we need one temporary %4 = (d + a)
-  REQUIRE(grad_spec.df_input_captured_inputs == std::vector<std::size_t>({0}));
-  REQUIRE(grad_spec.df_input_captured_outputs == std::vector<std::size_t>({2}));
-  REQUIRE(grad_spec.df_input_vjps == expected_input_vjps);
-  REQUIRE(grad_spec.df_output_vjps == expected_output_vjps);
+  JIT_ASSERT(grad_spec.f_real_outputs == 2);              // we need one temporary %4 = (d + a)
+  JIT_ASSERT(grad_spec.df_input_captured_inputs == std::vector<std::size_t>({0}));
+  JIT_ASSERT(grad_spec.df_input_captured_outputs == std::vector<std::size_t>({2}));
+  JIT_ASSERT(grad_spec.df_input_vjps == expected_input_vjps);
+  JIT_ASSERT(grad_spec.df_output_vjps == expected_output_vjps);
   out << "testDifferentiateWithRequiresGrad\n";
   out << *grad_spec.f;
   out << *grad_spec.df;
@@ -733,30 +706,29 @@ void argumentSpecTest() {
 
   ArgumentSpec a(true, list);
   ArgumentSpec b(true, list);
-  REQUIRE(a.hashCode() == b.hashCode());
+  JIT_ASSERT(a.hashCode() == b.hashCode());
 
-  REQUIRE(a == b);
+  JIT_ASSERT(a == b);
   ArgumentSpec d(true, list2);
-  REQUIRE(d == a);
-  REQUIRE(d.hashCode() == a.hashCode());
+  JIT_ASSERT(d == a && d.hashCode() == a.hashCode());
 
   for(size_t i = 0; i < list.size(); ++i) {
-    REQUIRE(isEqual(a.tensorInfo(i), list[i]));
+    JIT_ASSERT(isEqual(a.tensorInfo(i), list[i]));
   }
   ArgumentSpec no_grad(/*with_grad=*/false, list);
-  REQUIRE(no_grad != a);
+  JIT_ASSERT(no_grad != a);
 
   std::unordered_set<ArgumentSpec> spec;
   spec.insert(std::move(a));
-  REQUIRE(spec.count(b) > 0);
-  REQUIRE(spec.count(no_grad) == 0);
+  JIT_ASSERT(spec.count(b) > 0);
+  JIT_ASSERT(spec.count(no_grad) == 0);
   spec.insert(std::move(no_grad));
-  REQUIRE(spec.count(ArgumentSpec(true,list)) == 1);
+  JIT_ASSERT(spec.count(ArgumentSpec(true,list)) == 1);
 
   list2[1].transpose_(0,1);
   ArgumentSpec c(true, list2); // same as list, except for one stride
-  REQUIRE(!(c == a));
-  REQUIRE(spec.count(c) == 0);
+  JIT_ASSERT(!(c == a));
+  JIT_ASSERT(spec.count(c) == 0);
 
 }
 
@@ -782,8 +754,8 @@ void shapeAnalysisTest() {
   std::tie(r0, r1) = lstm(input, hx, cx, w_ih, w_hh);
   auto o0 = g->outputs()[0]->type()->expect<TensorType>();
   auto o1 = g->outputs()[1]->type()->expect<TensorType>();
-  REQUIRE(o0->sizes() == std::vector<int64_t>(r0.sizes().begin(), r0.sizes().end()));
-  REQUIRE(o1->sizes() == std::vector<int64_t>(r1.sizes().begin(), r1.sizes().end()));
+  JIT_ASSERT(o0->sizes() == std::vector<int64_t>(r0.sizes().begin(), r0.sizes().end()));
+  JIT_ASSERT(o1->sizes() == std::vector<int64_t>(r1.sizes().begin(), r1.sizes().end()));
 
 }
 
@@ -807,8 +779,8 @@ void testGraphExecutor() {
   auto outputs = executor.run(variable_tensor_list(std::move(inputs)));
   at::Tensor r0, r1;
   std::tie(r0, r1) = lstm(input, hx, cx, w_ih, w_hh);
-  REQUIRE(almostEqual(Variable(outputs[0]).data(), r0));
-  REQUIRE(almostEqual(Variable(outputs[1]).data(), r1));
+  JIT_ASSERT(almostEqual(Variable(outputs[0]).data(), r0));
+  JIT_ASSERT(almostEqual(Variable(outputs[1]).data(), r1));
 }
 
 void testBlocks(std::ostream & out) {
@@ -816,7 +788,7 @@ void testBlocks(std::ostream & out) {
   auto a = Var::asNewInput(g, "a");
   auto b = Var::asNewInput(g, "b");
   auto c = a + b;
-  auto r = g.appendNode(g.create(prim::If, {Var::asNewInput(g, "c").value()}));
+  auto r = g.appendNode(g.create(kIf, {Var::asNewInput(g, "c").value()}));
   auto then_block = r->addBlock();
   auto else_block = r->addBlock();
   {
@@ -862,7 +834,7 @@ const static auto cf_examples = R"JIT(
     return a
 )JIT";
 void testControlFlow() {
-  script::Module cu;
+  script::Module cu(/*optimize=*/true);
   script::defineMethodsInModule(cu, cf_examples, torch::jit::script::Resolver(), nullptr);
   auto run = [&](const std::string & name, std::vector<at::Tensor> stack) {
     auto graph = cu.get_method(name).graph();
@@ -872,60 +844,17 @@ void testControlFlow() {
     return stack;
   };
 
-  auto L = [](int64_t l) { return at::Scalar(l).toTensor(); };
-  auto V = [](at::Tensor t) { return at::Scalar(t).toLong(); };
-  auto run_binary = [&](const std::string & name, int64_t a, int64_t b) {
-    return V(run(name, {L(a), L(b)})[0]);
+  auto F = [](float f) { return at::Scalar(f).toTensor(); };
+  auto V = [](at::Tensor t) { return at::Scalar(t).toFloat(); };
+  auto run_binary = [&](const std::string & name, float a, float b) {
+    return V(run(name, {F(a), F(b)})[0]);
   };
-  REQUIRE(2 == run_binary("if_test", 1, 2));
-  REQUIRE(3 == run_binary("if_test", 3, 2));
-  REQUIRE(2 == run_binary("if_one", 2, 3));
-  REQUIRE(2 == run_binary("if_one", 3, 2));
-  REQUIRE(256 == run_binary("while_test",2,0));
+  JIT_ASSERT(2 == run_binary("if_test", 1, 2));
+  JIT_ASSERT(3 == run_binary("if_test", 3, 2));
+  JIT_ASSERT(2 == run_binary("if_one", 2, 3));
+  JIT_ASSERT(2 == run_binary("if_one", 3, 2));
+  JIT_ASSERT(256 == run_binary("while_test",2,0));
 }
-
-#ifdef NO_PYTHON
-
-TEST_CASE( "jit test CPU", "[cpu]" ) {
-
-  std::stringstream out;
-  SECTION( "control flow" )
-    testControlFlow();
-  SECTION( "blocks" )
-    testBlocks(out);
-  SECTION( "create autodiff subgraphs" )
-    testCreateAutodiffSubgraphs(out);
-  SECTION( "differentiate" )
-    testDifferentiate(out);
-  SECTION( "differentiate with requires grad" )
-    testDifferentiateWithRequiresGrad(out);
-  SECTION( "AD formulas" )
-    testADFormulas();
-  SECTION( "code template" )
-    codeTemplateTest();
-  SECTION( "attributes" )
-    attributesTest();
-  SECTION( "interned strings" )
-    internedStringsTests();
-}
-
-TEST_CASE( "jit test CUDA", "[cuda]" ) {
-
-  SECTION( "graph executor" )
-    testGraphExecutor();
-  SECTION( "fusion" )
-    fusionTests();
-  SECTION( "interp" )
-    interpTest();
-  SECTION( "interp stage" )
-    interpStageTest();
-  SECTION( "argument spec" )
-    argumentSpecTest();
-  SECTION( "shape analysis" )
-    shapeAnalysisTest();
-}
-
-#endif
 
 std::string runJITCPPTests() {
   std::stringstream out;
@@ -942,7 +871,6 @@ std::string runJITCPPTests() {
   fusionTests();
   attributesTest();
   internedStringsTests();
-  fromQualStringTests();
   argumentSpecTest();
   shapeAnalysisTest();
   return out.str();

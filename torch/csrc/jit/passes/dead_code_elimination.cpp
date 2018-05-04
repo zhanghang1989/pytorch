@@ -6,7 +6,7 @@ void EliminateDeadCode(std::shared_ptr<Graph>& graph) {
   EliminateDeadCode(graph->block());
 }
 bool hasSideEffects(Node * node) {
-  return node->kind() == prim::Print || node->blocks().size() > 0;
+  return node->kind() == kPrint;
 }
 
 void EliminateDeadCode(Block *block) {

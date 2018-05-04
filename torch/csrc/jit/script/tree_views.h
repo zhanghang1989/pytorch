@@ -3,7 +3,6 @@
 #include "tree.h"
 
 #include <functional>
-#include <string>
 
 namespace torch {
 namespace jit {
@@ -15,21 +14,21 @@ namespace script {
 // A few notes on types and their aliases:
 // - List<T> is really a Tree with kind TK_LIST and elements as subtrees
 // - Maybe<T> is really a Tree with kind TK_OPTION that has 0 or 1 subtree of type T
-// - Builtin types are: Ident (TK_IDENT), String (TK_STRING)
+// - Builtin types are: Ident (TK_IDENT), String (TK_STRING),
+//                      Number (TK_NUMBER) and Bool (TK_BOOL)
 //
 // Type  = TensorType()                                                 TK_TENSOR_TYPE
 // Param = Param(Type type, Ident name)                                 TK_PARAM
 //
+// -- TODO: change returns to be a list of expressions
 // Def   = Def(Ident name, List<Param> params, List<Stmt> body)         TK_DEF
 //
 // Stmt  = If(Expr cond, List<Stmt> true_body, List<Stmt> false_body)   TK_IF
-//       | For(List<Expr> targets, List<Expr> iters, List<Stmt> body)   TK_FOR
 //       | While(Expr cond, List<Stmt> body)                            TK_WHILE
 //       | Global(List<Ident> idents)                                   TK_GLOBAL
-//       -- NB: the only type of Expr's allowed on lhs are Starred and Var
-//       | Assign(List<Expr> lhs, AssignType maybe_reduce, Expr rhs)    TK_ASSIGN
+//       | Assign(List<Ident> lhs, AssignType maybe_reduce, Expr rhs)   TK_ASSIGN
 //       | Return(List<Expr> values)                                    TK_RETURN
-//       | ExprStmt(List<Expr> expr)                                    TK_EXPR_STMT
+//       | ExprStmt(Expr expr)                                          TK_EXPR_STMT
 //
 // Expr  = TernaryIf(Expr cond, Expr true_expr, Expr false_expr)        TK_IF_EXPR
 //       | BinOp(Expr lhs, Expr rhs)
@@ -48,7 +47,11 @@ namespace script {
 //       | UnaryOp(Expr expr)
 //       |     Not                                                      TK_NOT
 //       |     USub                                                     '-'
-//       | Const(String value)                                          TK_CONST
+//       -- * is one of  |   Number  | Bool |
+//       --              +-----------+------+
+//       -- type is then | "i" | "f" |  "b" |
+//       -- TODO: change this to a generic "Scalar" node that keep arbitrary precision values
+//       | Const(* value, String type)                                  TK_CONST
 //       | Cast(ScalarType type, Expr expr)                             TK_CAST
 //       -- NB: x.name(y) is desugared into name(x, y)
 //       | Apply(Ident name, List<Expr> args, List<Attribute> kwargs)   TK_APPLY
@@ -56,8 +59,6 @@ namespace script {
 //       | Slice(Expr value, Maybe<Expr> first, Maybe<Expr> second)     TK_SLICE
 //       | Gather(Expr value, Expr indices)                             TK_GATHER
 //       | Var(Ident name)                                              TK_VAR
-//       | ListLiteral(List<Expr> inputs)                               TK_LIST_LITERAL
-//       | Starred(Expr expr)                                           TK_STARRED
 //
 // -- NB: only allowed expressions are Const or List(Const)
 //        (List as a value, not type constructor)
@@ -109,24 +110,21 @@ protected:
   TreeRef tree_;
 };
 
-template<typename T>
-struct ListIterator {
-  ListIterator(TreeList::const_iterator it) : it(it) {}
-  bool operator!=(const ListIterator& rhs) const { return it != rhs.it; }
-  bool operator==(const ListIterator& rhs) const { return it == rhs.it; }
-  T operator*() const { return T(*it); }
-  ListIterator& operator+=(std::ptrdiff_t n) { it += n; return *this; }
-  ListIterator& operator++() { ++it; return *this; }
-  ListIterator& operator--() { --it; return *this; }
-
-private:
-  TreeList::const_iterator it;
-};
-
 template <typename T>
 struct List : public TreeView {
-  using iterator = ListIterator<T>;
-  using const_iterator = ListIterator<T>;
+  struct Iterator {
+    Iterator(TreeList::const_iterator it) : it(it) {}
+    bool operator!=(const Iterator& rhs) const { return it != rhs.it; }
+    bool operator==(const Iterator& rhs) const { return it == rhs.it; }
+    T operator*() const { return T(*it); }
+    void operator++() { ++it; }
+    void operator--() { --it; }
+
+  private:
+    TreeList::const_iterator it;
+  };
+  typedef Iterator iterator;
+  typedef Iterator const_iterator;
 
   List(const TreeRef& tree) : TreeView(tree) {
     tree->match(TK_LIST);
@@ -176,12 +174,6 @@ struct Maybe : public TreeView {
   TreeRef map(std::function<TreeRef(const T&)> fn) {
     return tree_->map([&](TreeRef v) { return fn(T(v)); });
   }
-  static Maybe<T> create(const SourceRange& range) {
-    return Maybe<T>(Compound::create(TK_OPTION, range, {}));
-  }
-  static Maybe<T> create(const SourceRange& range, const T& value) {
-    return Maybe<T>(Compound::create(TK_OPTION, range, {value}));
-  }
 };
 
 struct Ident : public TreeView {
@@ -215,7 +207,6 @@ struct Stmt : public TreeView {
   explicit Stmt(const TreeRef& tree) : TreeView(tree) {
     switch (tree->kind()) {
       case TK_IF:
-      case TK_FOR:
       case TK_WHILE:
       case TK_GLOBAL:
       case TK_ASSIGN:
@@ -242,14 +233,11 @@ struct Expr : public TreeView {
       case TK_NE:
       case '+':
       case '-':
-      case TK_UNARY_MINUS:
       case '*':
-      case TK_STARRED:
       case '/':
       case TK_NOT:
+      /* case '-': - unary minus */
       case TK_CONST:
-      case TK_TRUE:
-      case TK_FALSE:
       case TK_CAST:
       case TK_APPLY:
       case '.':
@@ -400,28 +388,6 @@ struct While : public Stmt {
   }
 };
 
-struct For : public Stmt {
-  explicit For(const TreeRef& tree) : Stmt(tree) {
-    tree->match(TK_FOR);
-  }
-  List<Expr> targets() const {
-    return List<Expr>(subtree(0));
-  }
-  List<Expr> itrs() const {
-    return List<Expr>(subtree(1));
-  }
-  List<Stmt> body() const {
-    return List<Stmt>(subtree(2));
-  }
-  static For create(
-      const SourceRange& range,
-      const List<Expr>& targets,
-      const List<Expr>& itrs,
-      const List<Stmt>& body) {
-    return For(Compound::create(TK_FOR, range, {targets, itrs, body}));
-  }
-};
-
 struct Global : public Stmt {
   explicit Global(const TreeRef& tree) : Stmt(tree) {
     tree_->match(TK_GLOBAL);
@@ -455,13 +421,13 @@ struct Assign : public Stmt {
   }
   static Assign create(
       const SourceRange& range,
-      const List<Expr>& lhs,
+      const List<Ident>& lhs,
       const AssignKind& reduction,
       const Expr& rhs) {
     return Assign(Compound::create(TK_ASSIGN, range, {lhs, reduction, rhs}));
   }
-  List<Expr> lhs() const {
-    return List<Expr>(subtree(0));
+  List<Ident> lhs() const {
+    return List<Ident>(subtree(0));
   }
   int reduction() const {
     return subtree(1)->kind();
@@ -487,11 +453,11 @@ struct ExprStmt : public Stmt {
   explicit ExprStmt(const TreeRef& tree) : Stmt(tree) {
     tree_->match(TK_EXPR_STMT);
   }
-  List<Expr> exprs() {
-    return List<Expr>(subtree(0));
+  Expr expr() {
+    return Expr(subtree(0));
   }
-  static ExprStmt create(const SourceRange& range, const List<Expr>& list) {
-    return ExprStmt(Compound::create(TK_EXPR_STMT, range, {list}));
+  static ExprStmt create(const SourceRange& range, const Expr& value) {
+    return ExprStmt(Compound::create(TK_EXPR_STMT, range, {value}));
   }
 };
 
@@ -536,7 +502,7 @@ struct BinOp : public Expr {
 struct UnaryOp : public Expr {
   explicit UnaryOp(const TreeRef& tree) : Expr(tree) {
     switch (tree->kind()) {
-      case TK_UNARY_MINUS:
+      case '-':
       case TK_NOT:
         if (tree->trees().size() != 1)
           throw ErrorReport(tree) << "UnaryOp expected 1 subtree, found " << tree->trees().size();
@@ -547,30 +513,6 @@ struct UnaryOp : public Expr {
   }
   static UnaryOp create(const SourceRange& range, int kind, const Expr& expr) {
     return UnaryOp(Compound::create(kind, range, {expr}));
-  }
-};
-
-struct Const : public Expr {
-  explicit Const(const TreeRef& tree) : Expr(tree) {
-    tree_->matchNumSubtrees(TK_CONST, 1);
-  }
-  bool isFloatingPoint() const {
-    return subtree(0)->stringValue().find_first_of(".eE") != std::string::npos;
-  }
-  bool isIntegral() const {
-    return !isFloatingPoint();
-  }
-  int64_t asIntegral() const {
-    return std::stoll(subtree(0)->stringValue());
-  }
-  double asFloatingPoint() const {
-    return std::stod(subtree(0)->stringValue());
-  }
-  const std::string& text() const {
-    return subtree(0)->stringValue();
-  }
-  static Const create(const SourceRange& range, const std::string& value) {
-    return Const(Compound::create(TK_CONST, range, {String::create(value)}));
   }
 };
 
@@ -656,7 +598,8 @@ struct Slice : public Expr {
   }
 private:
   Expr createInt(int value) const {
-    return Expr(Const::create(range(), std::to_string(value)));
+    return Expr(Compound::create(
+        TK_CONST, range(), {Number::create(value), String::create("i")}));
   }
 };
 
@@ -709,8 +652,8 @@ struct TernaryIf : public Expr {
 };
 
 
-struct ListLiteral : public Expr {
-  explicit ListLiteral(const TreeRef& tree) : Expr(tree) {
+struct ListLiteral : public TreeView {
+  explicit ListLiteral(const TreeRef& tree) : TreeView(tree) {
     tree_->match(TK_LIST_LITERAL);
   }
   List<Expr> inputs() const {
@@ -721,27 +664,6 @@ struct ListLiteral : public Expr {
   }
 };
 
-
-struct Starred : public Expr {
-  explicit Starred(const TreeRef& tree) : Expr(tree) {
-    tree_->match(TK_STARRED);
-  }
-  Expr expr() const {
-    return Expr(subtree(0));
-  }
-  static Starred create(const SourceRange& range, const Expr& expr) {
-    return Starred(Compound::create(TK_STARRED, range, {expr}));
-  }
-};
-
 } // namespace script
 } // namespace jit
 } // namespace torch
-
-namespace std {
-
-template<typename T>
-struct iterator_traits<torch::jit::script::ListIterator<T>>
-  : std::iterator_traits<torch::jit::script::TreeList::const_iterator> {};
-
-} // namespace std

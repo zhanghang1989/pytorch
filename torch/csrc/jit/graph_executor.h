@@ -16,7 +16,6 @@ struct GraphExecutor {
   operator bool() const {
     return pImpl != nullptr;
   }
-  std::shared_ptr<Graph> graph() const;
 private:
   std::shared_ptr<GraphExecutorImpl> pImpl;
 };

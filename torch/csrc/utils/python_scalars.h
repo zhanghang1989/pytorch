@@ -1,7 +1,7 @@
 #pragma once
 
 #include <ATen/ATen.h>
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 #include "python_numbers.h"
 #include "torch/csrc/Exceptions.h"

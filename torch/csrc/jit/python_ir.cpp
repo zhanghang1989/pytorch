@@ -1,14 +1,9 @@
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 #include "torch/csrc/jit/ir.h"
-#include "torch/csrc/jit/import.h"
 #include "torch/csrc/jit/pybind.h"
 #include "torch/csrc/jit/python_tracer.h"
 #include "torch/csrc/utils/pybind.h"
-#include "torch/csrc/jit/export.h"
-#include "torch/csrc/jit/passes/shape_analysis.h"
-#include "torch/csrc/jit/argument_spec.h"
-
 
 #include <iostream>
 #include <sstream>
@@ -26,60 +21,6 @@ void initPythonIRBindings(PyObject * module_) {
       ss << g;
       return ss.str();
     })
-    .def("propagate_shapes", [](Graph& g, std::vector<at::Tensor> inputs, bool with_grad) {
-      PropagateInputShapes(g, ArgumentSpec(with_grad, variable_tensor_list(std::move(inputs))));
-    })
-    .def("export", [](const std::shared_ptr<Graph> g, const std::vector<at::Tensor>& initializers,
-                      int64_t onnx_opset_version, bool defer_weight_export, bool export_raw_ir) {
-      std::string graph;
-      RawDataExportMap export_map;
-      std::tie(graph, export_map) = ExportGraph(
-        g, initializers, onnx_opset_version, defer_weight_export, export_raw_ir);
-      std::unordered_map<std::string, py::bytes> python_serialized_export_map;
-      for (auto& kv : export_map) {
-        auto t = kv.second;
-        size_t copy_bytes = t.type().elementSizeInBytes() * t.numel();
-        // TODO: this is an unecessary copy. In theory we can directly return
-        // the map from identifier to Tensor, but we need some API in Python
-        // to get raw `bytes` containing the raw tensor data.
-        python_serialized_export_map[kv.first] = py::bytes(static_cast<const char*>(t.data_ptr()), copy_bytes);
-      }
-      return std::make_tuple(py::bytes(graph), python_serialized_export_map);
-    }, py::arg("initializers"),
-       py::arg("onnx_opset_version")=0,
-       py::arg("defer_weight_export")=false,
-       py::arg("export_raw_ir")=false )
-    .def("prettyPrintExport", [](const std::shared_ptr<Graph> g, const std::vector<at::Tensor>& initializers,
-                      int64_t onnx_opset_version, bool defer_weight_export, bool export_raw_ir) {
-      return PrettyPrintExportedGraph(
-        g, initializers, onnx_opset_version, defer_weight_export, export_raw_ir);
-    }, py::arg("initializers"),
-       py::arg("onnx_opset_version")=0,
-       py::arg("defer_weight_export")=false,
-       py::arg("export_raw_ir")=false )
-    .def("wrapPyFuncWithSymbolic", [](Graph &g, py::function func, std::vector<Value*> inputs, size_t n_outputs, py::function symbolic) {
-      // This function should be used for situations where we have a Python function
-      // that should have different behavior when exporting for JIT interpreter
-      // execution v.s. for ONNX export. For example, nn.utils.rnn.pack_padded_sequence
-      // emits a placeholder under ONNX export, but we want to keep the ability to
-      // run this in the interpreter, thus we emit a PythonOp for that use case.
-
-      // Concretely, this function emits a PythonOp wrapping the passed-in
-      // parameter `func`, while storing the function `symbolic` for use by the
-      // ONNX export
-      std::string cconv(inputs.size(), 't');
-      func.attr("symbolic") = symbolic;
-      Node* new_node = g.insertNode(g.createPythonOp(
-        THPObjectPtr(func.release().ptr()), cconv, {}, {}, false));
-      for (auto i : inputs)
-        new_node->addInput(i);
-      std::vector<Value*> outputs;
-      for (size_t i = 0; i < n_outputs; ++i)
-        new_node->addOutput();
-      auto sl = std::make_shared<StringSourceLocation>(tracer::getPythonInterpreterStackTrace());
-      new_node->setSourceLocation(sl);
-      return py::make_iterator(new_node->outputs().begin(), new_node->outputs().end());
-    }, py::return_value_policy::reference_internal)
     .def("inputs",[](Graph &g) {
       return py::make_iterator(g.inputs().begin(), g.inputs().end());
     })
@@ -96,16 +37,16 @@ void initPythonIRBindings(PyObject * module_) {
     .GS(eraseInput)
     .GS(registerOutput)
     .def("create",[](Graph & g, const char * str) {
-      return g.create(Symbol::fromQualString(str));
+      return g.create(Symbol(str));
     })
     .def("create",[](Graph & g, const char * str, size_t noutputs) {
-      return g.create(Symbol::fromQualString(str), noutputs);
+      return g.create(Symbol(str), noutputs);
     })
     .def("create",[](Graph & g, const char * str, const std::vector<Value*> & inputs) {
-      return g.create(Symbol::fromQualString(str),inputs);
+      return g.create(Symbol(str),inputs);
     })
     .def("create",[](Graph & g, const char * str, const std::vector<Value*> & inputs, size_t noutputs) {
-      return g.create(Symbol::fromQualString(str),inputs, noutputs);
+      return g.create(Symbol(str),inputs, noutputs);
     })
     .GS(createConstant)
     .GS(createFusionGroup)
@@ -117,7 +58,6 @@ void initPythonIRBindings(PyObject * module_) {
     .GS(appendNode)
     .GS(prependNode)
     .GS(lint)
-    .GS(insertNode)
     ;
     #undef GS
 
@@ -149,12 +89,9 @@ void initPythonIRBindings(PyObject * module_) {
       return node;
     })
     .VS(copyMetadata)
-    .VS(isTensor)
     ;
 
   #undef VS
-
-  py::class_<Block, std::unique_ptr<Block, py::nodelete>>(m, "Block");
 
   #define NS(name) \
     def(#name,&Node :: name)
@@ -195,31 +132,22 @@ void initPythonIRBindings(PyObject * module_) {
     .NS(eraseOutput)
     .NS(addOutput)
     .NS(scopeName)
-    .def("blocks", [](Node& n) {
-      return py::make_iterator(n.blocks().begin(), n.blocks().end());
-    })
-    .NS(addBlock)
 
 #define AS(name) def(#name,&Attributes<Node> :: name)
     // methods from Attributes
     .AS(copyAttributes)
-    .AS(hasAttributes)
-#undef AS
-#define AS(name) def(#name,&Attributes<Node> :: name ## S)
-    // The default method names take Symbol, but the string conversion for
-    // Symbol you to qualify with attr::. This is not very user friendly
-    // for attributes, so expose the string variants instead.
     .AS(hasAttribute)
     .AS(kindOf)
     .AS(removeAttribute)
+    .AS(hasAttributes)
     .AS(attributeNames)
 #undef AS
 #define CREATE_ACCESSOR(Kind,method) \
     def(#method "_",[](Node & n, const char * name, Kind##Attr::ValueType v) { \
-      return n . method ## _(Symbol::attr(name), std::move(v)); \
+      return n . method ## _(Symbol(name), std::move(v)); \
     }) \
     .def(#method, [](Node & n, const char * name) { \
-      return n.method(Symbol::attr(name)); \
+      return n.method(Symbol(name)); \
     })
     .CREATE_ACCESSOR(Float,f)
     .CREATE_ACCESSOR(Floats,fs)
@@ -232,10 +160,10 @@ void initPythonIRBindings(PyObject * module_) {
 #undef CREATE_ACCESSOR
     // Tensor (t_) -- manually written to unwrap the variable into a tensor.
     .def("t_",[](Node & n, const char * name, torch::autograd::Variable v) {
-      return n.t_(Symbol::attr(name), std::move(v.data()));
+      return n.t_(Symbol(name), std::move(v.data()));
     })
     .def("t", [](Node & n, const char * name) {
-      return torch::autograd::make_variable(n.t(Symbol::attr(name)), /*requires_grad=*/false);
+      return torch::autograd::make_variable(n.t(Symbol(name)), /*requires_grad=*/false);
     })
     // Tensors (ts_) -- manually written to unwrap variables into tensors.
     .def("ts_",[](Node & n, const char * name, std::vector<torch::autograd::Variable> vs) {
@@ -244,10 +172,10 @@ void initPythonIRBindings(PyObject * module_) {
       for (auto& variable : vs) {
         tensors.push_back(std::move(variable.data()));
       }
-      return n.ts_(Symbol::attr(name), std::move(tensors));
+      return n.ts_(Symbol(name), std::move(tensors));
     })
     .def("ts", [](Node & n, const char * name) {
-      auto tensors = n.ts(Symbol::attr(name));
+      auto tensors = n.ts(Symbol(name));
       std::vector<torch::autograd::Variable> variables;
       variables.reserve(tensors.size());
       for (auto& tensor : tensors) {
@@ -257,19 +185,19 @@ void initPythonIRBindings(PyObject * module_) {
       return variables;
     })
     .def("z_",[](Node & n, const char * name, at::Tensor v) {
-        return n.t_(Symbol::attr(name), v.view({}));
+        return n.t_(Symbol(name), std::move(v.view({})));
     })
     .def("z",[](Node & n, const char * name) {
-        return n.t(Symbol::attr(name));
+        return n.t(Symbol(name));
     })
     .def("zs_",[](Node & n, const char * name, TensorsAttr::ValueType v) {
         for (size_t i = 0; i < v.size(); ++ i) {
             v[i] = v[i].view({});
         }
-        return n.ts_(Symbol::attr(name), std::move(v));
+        return n.ts_(Symbol(name), std::move(v));
     })
     .def("zs",[](Node & n, const char * name) {
-        return n.ts(Symbol::attr(name));
+        return n.ts(Symbol(name));
     })
     .def("pyobj",[](Node & n) {
       return py::handle(n.expect<PythonOp>()->pyobj.get()).cast<py::object>();
@@ -292,7 +220,7 @@ void initPythonIRBindings(PyObject * module_) {
     ;
 
   #define TS(name) \
-    def(#name,&Type :: name)
+    def(#name,&Node :: name)
   py::class_<Type,std::shared_ptr<Type>>(m,"Type")
     .def("__repr__",[](Type & t) {
       std::stringstream ss;
@@ -308,8 +236,6 @@ void initPythonIRBindings(PyObject * module_) {
           return "DynamicType";
         case TypeKind::TensorType:
           return "TensorType";
-        case TypeKind::TupleType:
-          return "TupleType";
         default:
           torch::barf("unknown type kind");
           return "";
@@ -335,17 +261,6 @@ void initPythonIRBindings(PyObject * module_) {
 
   m.def("_jit_get_graph", [](tracer::TracingState* s) {
     return s->graph;
-  });
-  m.def("_jit_import_graph", [](const std::string& serialized_graph) {
-    std::vector<at::Tensor> initializers;
-    auto graph = ImportIRGraph(serialized_graph, initializers);
-    std::vector<torch::autograd::Variable> variables;
-    variables.reserve(initializers.size());
-    for (auto& tensor : initializers) {
-      variables.push_back(torch::autograd::make_variable(
-          std::move(tensor), /*requires_grad=*/false));
-    }
-    return std::make_tuple(graph, variables);
   });
   m.def("_jit_is_tracing", [](const autograd::Variable& var) {
     return tracer::isTracing(var);

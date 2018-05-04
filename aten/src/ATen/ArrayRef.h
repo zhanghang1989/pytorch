@@ -14,13 +14,10 @@
 // removed a bunch of slice variants for simplicity...
 
 #pragma once
-
-#include <ATen/Error.h>
-#include <ATen/SmallVector.h>
-
+#include <assert.h>
 #include <array>
-#include <iterator>
 #include <vector>
+#include "ATenAssert.h"
 
 namespace at {
   /// ArrayRef - Represent a constant reference to an array (0 or more elements
@@ -69,14 +66,6 @@ namespace at {
     ArrayRef(const T *begin, const T *end)
       : Data(begin), Length(end - begin) {}
 
-    /// Construct an ArrayRef from a SmallVector. This is templated in order to
-    /// avoid instantiating SmallVectorTemplateCommon<T> whenever we
-    /// copy-construct an ArrayRef.
-    template<typename U>
-    /*implicit*/ ArrayRef(const SmallVectorTemplateCommon<T, U> &Vec)
-      : Data(Vec.data()), Length(Vec.size()) {
-    }
-
     /// Construct an ArrayRef from a std::vector.
     template<typename A>
     /*implicit*/ ArrayRef(const std::vector<T, A> &Vec)
@@ -100,8 +89,8 @@ namespace at {
     /// @name Simple Operations
     /// @{
 
-    const_iterator begin() const { return Data; }
-    const_iterator end() const { return Data + Length; }
+    iterator begin() const { return Data; }
+    iterator end() const { return Data + Length; }
 
     reverse_iterator rbegin() const { return reverse_iterator(end()); }
     reverse_iterator rend() const { return reverse_iterator(begin()); }
@@ -116,13 +105,13 @@ namespace at {
 
     /// front - Get the first element.
     const T &front() const {
-      AT_CHECK(!empty(), "ArrayRef: attempted to access front() of empty list");
+      AT_ASSERT(!empty(), "Empty list!");
       return Data[0];
     }
 
     /// back - Get the last element.
     const T &back() const {
-      AT_CHECK(!empty(), "ArrayRef: attempted to access back() of empty list");
+      AT_ASSERT(!empty(), "Empty list!");
       return Data[Length-1];
     }
 
@@ -136,7 +125,7 @@ namespace at {
     /// slice(n, m) - Chop off the first N elements of the array, and keep M
     /// elements in the array.
     ArrayRef<T> slice(size_t N, size_t M) const {
-      AT_CHECK(N+M <= size(), "ArrayRef: invalid slice, ", N, " + ", M, " is not <= ", size());
+      AT_ASSERT(N+M <= size(), "Invalid specifier");
       return ArrayRef<T>(data()+N, M);
     }
 
@@ -152,7 +141,7 @@ namespace at {
 
     /// Vector compatibility
     const T &at(size_t Index) const {
-      AT_CHECK(Index < Length, "ArrayRef: invalid index ", Index, " for length ", Length);
+      AT_ASSERT(Index < Length, "Invalid index!");
       return Data[Index];
     }
 

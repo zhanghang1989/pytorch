@@ -178,37 +178,31 @@ class StmtBuilder(Builder):
 
     @staticmethod
     def build_Expr(ctx, stmt):
-        return ExprStmt([build_expr(ctx, stmt.value)])
+        return ExprStmt(build_expr(ctx, stmt.value))
 
     @staticmethod
-    def get_assign_lhs_expr(ctx, expr):
+    def get_assign_ident(ctx, expr):
         var = build_expr(ctx, expr)
-        if not isinstance(var, Var) and not isinstance(var, Starred):
-            raise NotSupportedError(var.range(),
-                                    "the only expressions allowed on the left hand side of "
-                                    "assignments are variable names and starred expressions")
-        return var
+        if not isinstance(var, Var):
+            raise NotSupportedError("the only expressions allowed on the left hand side of "
+                                    "assignments are variable names", var.range())
+        return var.name
 
     @staticmethod
     def build_Assign(ctx, stmt):
-        rhs = build_expr(ctx, stmt.value)
-        if len(stmt.targets) > 1:
-            start_point = ctx.make_range(stmt.lineno, stmt.col_offset, stmt.col_offset + 1)
-            raise NotSupportedError(ctx.make_raw_range(start_point.start, rhs.range().end),
-                                    "Performing multiple assignments in a single line isn't supported")
-        py_lhs = stmt.targets[0]
-        py_lhs_exprs = py_lhs.elts if isinstance(py_lhs, ast.Tuple) else [py_lhs]
-        return Assign([StmtBuilder.get_assign_lhs_expr(ctx, e) for e in py_lhs_exprs], '=', rhs)
+        return Assign([StmtBuilder.get_assign_ident(ctx, e) for e in stmt.targets],
+                      '=',
+                      build_expr(ctx, stmt.value))
 
     @staticmethod
     def build_Return(ctx, stmt):
         r = ctx.make_range(stmt.lineno, stmt.col_offset, stmt.col_offset + len("return"))
         values = (stmt.value,) if not isinstance(stmt.value, ast.Tuple) else stmt.value.elts
-        return Return(r, [build_expr(ctx, val) for val in values if val is not None])
+        return Return(r, [build_expr(ctx, val) for val in values])
 
     @staticmethod
     def build_AugAssign(ctx, stmt):
-        lhs = [StmtBuilder.get_assign_lhs_expr(ctx, stmt.target)]
+        lhs = [StmtBuilder.get_assign_ident(ctx, stmt.target)]
         rhs = build_expr(ctx, stmt.value)
         op = type(stmt.op)
         if op in StmtBuilder.augassign_map:
@@ -229,13 +223,6 @@ class StmtBuilder(Builder):
         return While(r, build_expr(ctx, stmt.test), [build_stmt(ctx, s) for s in stmt.body])
 
     @staticmethod
-    def build_For(ctx, stmt):
-        r = ctx.make_range(stmt.lineno, stmt.col_offset, stmt.col_offset + len("for"))
-        return For(
-            r, [StmtBuilder.get_assign_lhs_expr(ctx, stmt.target)],
-            [build_expr(ctx, stmt.iter)], [build_stmt(ctx, s) for s in stmt.body])
-
-    @staticmethod
     def build_If(ctx, stmt):
         r = ctx.make_range(stmt.lineno, stmt.col_offset, stmt.col_offset + len("if"))
         return If(r, build_expr(ctx, stmt.test),
@@ -248,7 +235,7 @@ class StmtBuilder(Builder):
         if stmt.dest:
             raise NotSupportedError(r, "print statements with non-default destinations aren't supported")
         args = [build_expr(ctx, val) for val in stmt.values]
-        return ExprStmt([Apply(Var(Ident(r, "print")), args, [])])
+        return ExprStmt(Apply(Var(Ident(r, "print")), args, []))
 
 
 class ExprBuilder(Builder):
@@ -297,9 +284,6 @@ class ExprBuilder(Builder):
     def build_Call(ctx, expr):
         func = build_expr(ctx, expr.func)
         args = [build_expr(ctx, py_arg) for py_arg in expr.args]
-        if hasattr(expr, 'starargs') and expr.starargs:
-            stararg_expr = build_expr(ctx, expr.starargs)
-            args += [Starred(stararg_expr.range(), stararg_expr)]
         kwargs = []
         for kw in expr.keywords:
             kw_expr = build_expr(ctx, kw.value)
@@ -313,20 +297,7 @@ class ExprBuilder(Builder):
         if expr.id.startswith(_reserved_prefix):
             raise NotSupportedError(r, "names of variables used in JIT-ed functions "
                                        "can't start with " + _reserved_prefix)
-        if expr.id == "True":
-            return TrueLiteral(r)
-        elif expr.id == "False":
-            return FalseLiteral(r)
         return Var(Ident(r, expr.id))
-
-    @staticmethod
-    def build_NameConstant(ctx, expr):
-        text = "True" if expr.value else "False"
-        r = ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + len(text))
-        if expr.value:
-            return TrueLiteral(r)
-        else:
-            return FalseLiteral(r)
 
     @staticmethod
     def build_BinOp(ctx, expr):
@@ -335,7 +306,7 @@ class ExprBuilder(Builder):
         op = type(expr.op)
         op_token = ExprBuilder.binop_map.get(op)
         if op_token is None:
-            err_range = ctx.make_raw_range(lhs.range().end, rhs.range().start)
+            err_range = ctx.make_range(lhs.range().end, rhs.range().start)
             raise NotSupportedError(err_range, "unsupported binary operator: " + op.__name__)
         return BinOp(op_token, lhs, rhs)
 
@@ -389,44 +360,10 @@ class ExprBuilder(Builder):
         return result
 
     @staticmethod
-    def build_Subscript(ctx, expr):
-        base = build_expr(ctx, expr.value)
-        sub_type = type(expr.slice)
-        if sub_type is ast.Index:
-            index = build_expr(ctx, expr.slice.value)
-            return Gather(base, index)
-        elif sub_type is ast.Slice:
-            lower = build_expr(ctx, expr.slice.lower) if expr.slice.lower is not None else None
-            upper = build_expr(ctx, expr.slice.upper) if expr.slice.upper is not None else None
-            if expr.slice.step is not None:
-                step = build_expr(ctx, expr.slice.step)
-                raise NotSupportedError(step.range(), "slices with ranges are not supported yet")
-            return Slice(base, lower, upper)
-        elif sub_type is ast.ExtSlice:
-            raise NotSupportedError(base.range(), "slicing multiple dimensions at the same time isn't supported yet")
-        else:  # Ellipsis (can only happen in Python 2)
-            raise NotSupportedError(base.range(), "ellipsis is not supported")
-
-    @staticmethod
-    def build_List(ctx, expr):
-        return ListLiteral(ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + 1),
-                           [build_expr(ctx, e) for e in expr.elts])
-
-    @staticmethod
-    def build_Tuple(ctx, expr):
-        return ListLiteral(ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + 1),
-                           [build_expr(ctx, e) for e in expr.elts])
-
-    @staticmethod
     def build_Num(ctx, expr):
-        value = str(expr.n)
-        r = ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + len(value))
-        return Const(r, value)
-
-    @staticmethod
-    def build_Starred(ctx, expr):
-        r = ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + 1)
-        return Starred(r, build_expr(ctx, expr.value))
+        # TODO: fix this once we have a nice Number node in our AST
+        err_range = ctx.make_range(expr.lineno, expr.col_offset, expr.col_offset + 1)
+        raise NotSupportedError(err_range, "scalar constants aren't supported")
 
 build_expr = ExprBuilder()
 build_stmt = StmtBuilder()

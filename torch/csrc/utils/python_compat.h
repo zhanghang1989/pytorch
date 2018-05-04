@@ -1,6 +1,6 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 // https://bugsfiles.kde.org/attachment.cgi?id=61186
 #if PY_VERSION_HEX >= 0x03020000

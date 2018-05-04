@@ -2,6 +2,7 @@ import math
 from numbers import Number
 
 import torch
+from torch.autograd import Variable
 from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.utils import broadcast_all
@@ -14,7 +15,7 @@ class Uniform(Distribution):
 
     Example::
 
-        >>> m = Uniform(torch.tensor([0.0]), torch.tensor([5.0]))
+        >>> m = Uniform(torch.Tensor([0.0]), torch.Tensor([5.0]))
         >>> m.sample()  # uniformly distributed in the range [0.0, 5.0)
          2.3418
         [torch.FloatTensor of size 1]
@@ -24,7 +25,7 @@ class Uniform(Distribution):
         high (float or Tensor): upper range (exclusive).
     """
     # TODO allow (loc,scale) parameterization to allow independent constraints.
-    arg_constraints = {'low': constraints.dependent, 'high': constraints.dependent}
+    params = {'low': constraints.dependent, 'high': constraints.dependent}
     has_rsample = True
 
     @property
@@ -39,17 +40,13 @@ class Uniform(Distribution):
     def variance(self):
         return (self.high - self.low).pow(2) / 12
 
-    def __init__(self, low, high, validate_args=None):
+    def __init__(self, low, high):
         self.low, self.high = broadcast_all(low, high)
-
         if isinstance(low, Number) and isinstance(high, Number):
             batch_shape = torch.Size()
         else:
             batch_shape = self.low.size()
-        super(Uniform, self).__init__(batch_shape, validate_args=validate_args)
-
-        if self._validate_args and not torch.lt(self.low, self.high).all():
-            raise ValueError("Uniform is not defined when low>= high")
+        super(Uniform, self).__init__(batch_shape)
 
     @constraints.dependent_property
     def support(self):
@@ -61,21 +58,18 @@ class Uniform(Distribution):
         return self.low + rand * (self.high - self.low)
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         lb = value.ge(self.low).type_as(self.low)
         ub = value.lt(self.high).type_as(self.low)
         return torch.log(lb.mul(ub)) - torch.log(self.high - self.low)
 
     def cdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         result = (value - self.low) / (self.high - self.low)
         return result
 
     def icdf(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         result = value * (self.high - self.low) + self.low
         return result
 

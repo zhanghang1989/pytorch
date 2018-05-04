@@ -1,7 +1,7 @@
 from numbers import Number
 
 import torch
-from torch.autograd import Function
+from torch.autograd import Function, Variable
 from torch.autograd.function import once_differentiable
 from torch.distributions import constraints
 from torch.distributions.exp_family import ExponentialFamily
@@ -42,7 +42,7 @@ class Dirichlet(ExponentialFamily):
 
     Example::
 
-        >>> m = Dirichlet(torch.tensor([0.5, 0.5]))
+        >>> m = Dirichlet(torch.Tensor([0.5, 0.5]))
         >>> m.sample()  # Dirichlet distributed with concentrarion concentration
          0.1046
          0.8954
@@ -52,36 +52,35 @@ class Dirichlet(ExponentialFamily):
         concentration (Tensor): concentration parameter of the distribution
             (often referred to as alpha)
     """
-    arg_constraints = {'concentration': constraints.positive}
+    params = {'concentration': constraints.positive}
     support = constraints.simplex
     has_rsample = True
 
-    def __init__(self, concentration, validate_args=None):
+    def __init__(self, concentration):
         self.concentration, = broadcast_all(concentration)
         batch_shape, event_shape = concentration.shape[:-1], concentration.shape[-1:]
-        super(Dirichlet, self).__init__(batch_shape, event_shape, validate_args=validate_args)
+        super(Dirichlet, self).__init__(batch_shape, event_shape)
 
     def rsample(self, sample_shape=()):
         shape = self._extended_shape(sample_shape)
         concentration = self.concentration.expand(shape)
-        if isinstance(concentration, torch.Tensor):
+        if isinstance(concentration, Variable):
             return _Dirichlet.apply(concentration)
         return _dirichlet_sample_nograd(concentration)
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         return ((torch.log(value) * (self.concentration - 1.0)).sum(-1) +
                 torch.lgamma(self.concentration.sum(-1)) -
                 torch.lgamma(self.concentration).sum(-1))
 
     @property
     def mean(self):
-        return self.concentration / self.concentration.sum(-1, True)
+        return self.concentration / self.concentration.sum(-1)
 
     @property
     def variance(self):
-        con0 = self.concentration.sum(-1, True)
+        con0 = self.concentration.sum(-1)
         return self.concentration * (con0 - self.concentration) / (con0.pow(2) * (con0 + 1))
 
     def entropy(self):

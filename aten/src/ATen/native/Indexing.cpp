@@ -229,7 +229,8 @@ static std::tuple<Tensor, Tensor> makeLinearIndex(Tensor self, TensorList orig) 
 
 Tensor index(const Tensor & self, TensorList indices) {
   if (indices.size() > (size_t)self.dim()) {
-   AT_ERROR("too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
+    runtime_error("too many indices for tensor of dimension %d (got %d)",
+      (int)self.dim(), (int)indices.size());
   }
 
   Tensor src, linearIndex;
@@ -239,55 +240,14 @@ Tensor index(const Tensor & self, TensorList indices) {
 
 Tensor & index_put_(Tensor & self, TensorList indices, const Tensor & value) {
   if (indices.size() > (size_t)self.dim()) {
-   AT_ERROR("too many indices for tensor of dimension ", self.dim(), " (got ", indices.size(), ")");
+    runtime_error("too many indices for tensor of dimension %d (got %d)",
+      (int)self.dim(), (int)indices.size());
   }
 
   Tensor src, linearIndex, expandedValue;
   std::tie(src, linearIndex) = makeLinearIndex(self, indices);
   std::tie(expandedValue) = expand_inplace(linearIndex, value);
   return src.put_(linearIndex, expandedValue);
-}
-
-Tensor & index_copy_(Tensor & self, int64_t dim, const Tensor & index, const Tensor & source) {
-  dim = maybe_wrap_dim(dim, self.dim());
-
-  if (index.dim() >= 2) {
-   AT_ERROR(
-        "index_copy_(): Index should have dimension 1 or 0 (got ", index.dim(), ")");
-  }
-  int64_t numIndices = index.numel();
-  if (source.dim() == 0 && numIndices != 1) {
-   AT_ERROR(
-        "index_copy_(): When source is scalar, index should have one element (got ", numIndices, ")");
-  }
-  if (source.dim() > 0 && numIndices != source.size(dim)) {
-   AT_ERROR(
-        "index_copy_(): Number of indices (", numIndices, ") should be equal to source.size(dim) (", source.size(dim), ")");
-  }
-  if (index.type().scalarType() != ScalarType::Long) {
-   AT_ERROR("index_copy_(): Expected LongTensor for index");
-  }
-
-  // Check that source and destination slices have the same size
-  auto selfSlicedSizes = std::vector<int64_t>(self.sizes());
-  if (selfSlicedSizes.size() > 0) {
-    selfSlicedSizes.erase(selfSlicedSizes.begin() + dim);
-  }
-  auto sourceSlicedSizes = std::vector<int64_t>(source.sizes());
-  if (sourceSlicedSizes.size() > 0) {
-    sourceSlicedSizes.erase(sourceSlicedSizes.begin());
-  }
-  if (selfSlicedSizes.size() != sourceSlicedSizes.size() ||
-      !std::equal(selfSlicedSizes.begin(), selfSlicedSizes.end(),
-                  sourceSlicedSizes.begin())) {
-    std::stringstream ss;
-    ss << "index_copy_(): Source/destination tensor must have same slice shapes. ";
-    ss << "Destination slice shape: " << selfSlicedSizes << " at dimension " << dim;
-    ss << " and source slice shape: " << sourceSlicedSizes << " at dimension 0.";
-    throw std::runtime_error(ss.str());
-  }
-
-  return self._indexCopy_(dim, index, source);
 }
 
 }} // at::native

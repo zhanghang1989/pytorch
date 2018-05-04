@@ -62,7 +62,6 @@ void checkNumel(CheckedFrom c, const TensorGeometryArg& t, int64_t numel);
 void checkSameNumel(CheckedFrom c, const TensorGeometryArg& t1, const TensorGeometryArg& t2);
 void checkAllSameNumel(CheckedFrom c, ArrayRef<TensorArg> tensors);
 void checkScalarType(CheckedFrom c, const TensorArg& t, ScalarType s);
-void checkScalarTypes(CheckedFrom c, const TensorArg& t, at::ArrayRef<ScalarType> l);
 void checkSameGPU(CheckedFrom c, const TensorArg& t1, const TensorArg& t2);
 void checkAllSameGPU(CheckedFrom c, ArrayRef<TensorArg> tensors);
 void checkSameType(CheckedFrom c, const TensorArg& t1, const TensorArg& t2);
@@ -72,10 +71,11 @@ void checkDefined(CheckedFrom c, const TensorArg& t);
 void checkAllDefined(CheckedFrom c, at::ArrayRef<TensorArg> t);
 
 // FixMe: does TensorArg slow things down?
-AT_API void checkBackend(CheckedFrom c, at::ArrayRef<Tensor> t, at::Backend backend);
+void checkBackend(CheckedFrom c, at::ArrayRef<Tensor> t, at::Backend backend);
 
 // Methods for getting data_ptr if tensor is defined
 void * maybe_data_ptr(const Tensor& tensor);
 void * maybe_data_ptr(const TensorArg& tensor);
 
 }
+

@@ -124,11 +124,12 @@ struct TreeToken {
   }
 
   std::vector<Node*> gatherMatMuls() {
+    static const Symbol mm_kind = kmm;
     std::vector<Node*> matmuls;
     std::vector<Node*> queue {node};
     while (!queue.empty()) {
       auto n = queue.back(); queue.pop_back();
-      if (n->kind() == aten::mm) {
+      if (n->kind() == mm_kind) {
         matmuls.push_back(n);
       } else {
         queue.push_back(n->inputs()[0]->node());
@@ -141,14 +142,18 @@ struct TreeToken {
 
 void BatchMMBlock(Block* block) {
   enum class Side { LHS, RHS };
+  static const Symbol mm_kind = kmm;
+  static const Symbol add_kind = kadd;
+  static const Symbol cat_kind = kcat;
+  static const Symbol dim_sym = kdim;
   auto graph = block->owningGraph();
 
   // Look for trees in the block
   std::unordered_map<Node*, TreeToken> tokens;
   for (auto node : block->nodes()) {
-    if (node->kind() == aten::mm) {
+    if (node->kind() == mm_kind) {
       tokens[node] = TreeToken::fromMM(node);
-    } else if (node->kind() == aten::add) {
+    } else if (node->kind() == add_kind) {
       // NOTE: x + 2 is add[other={2}](%x)
       if (node->inputs().size() != 2) continue;
       Node *lhs = node->inputs()[0]->node();
@@ -187,8 +192,8 @@ void BatchMMBlock(Block* block) {
       cat_sizes[cat_dim] *= matmuls.size(); // make them really cat_sizes
 
       auto inputs = fmap(matmuls, [=](Node *mm) { return mm->inputs()[inputs_off]; });
-      Node *cat = graph->create(aten::cat, inputs)
-                       ->i_(attr::dim, cat_dim);
+      Node *cat = graph->create(cat_kind, inputs)
+                       ->i_(dim_sym, cat_dim);
       cat->insertBefore(root.node);
       cat->output()->setType(type->withSizes(cat_sizes));
       return cat->output();
@@ -196,7 +201,7 @@ void BatchMMBlock(Block* block) {
 
     auto lhs_batch = batch_inputs(Side::LHS, root.lhs_sizes);
     auto rhs_batch = batch_inputs(Side::RHS, root.rhs_sizes);
-    Node *batch_mm = graph->create(aten::mm, {lhs_batch, rhs_batch});
+    Node *batch_mm = graph->create(mm_kind, {lhs_batch, rhs_batch});
     batch_mm->output()->setType(type->asShared());
     batch_mm->insertBefore(root.node);
     root.node->output()->replaceAllUsesWith(batch_mm->output());

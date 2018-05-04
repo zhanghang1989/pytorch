@@ -1,6 +1,6 @@
 #include "torch/csrc/autograd/python_function.h"
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <structmember.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -78,7 +78,7 @@ auto PyFunction::legacy_apply(const variable_list& inputs) -> variable_list {
   }
 
   // XXX: this might get requires_grad wrong - there's no way to figure out
-  // if _do_backward didn't use ctx.saved_tensors and as a result some
+  // if _do_backward didn't use ctx.saved_variables and as a result some
   // Variables might require grad, even if no args do. Unfortunately, this
   // leads to unexpected error messages ("no nodes require computing gradients"),
   // but I don't have a better idea. These functions would raise an error
@@ -373,29 +373,22 @@ static void _wrap_outputs(THPFunction *self,
   auto set_history = [&](Variable& var, uint32_t output_nr, bool is_input, bool is_modified,
                          bool is_differentiable) {
     if (!is_differentiable) {
-      if (!var.requires_grad()) {
-        return;
-      }
+      if (!var.requires_grad()) return;
       // NB: we don't support returning non-differentiable views that could require grad
+      // (this could happen if someone were to return an input to the function).
       if (var.is_view()) {
         throw std::runtime_error("Returning Variables sharing storage with other Variables "
                                  "that require grad is not supported in Python functions. "
                                  "Please submit a feature request if you hit this error.");
       }
-      // Return detached aliases of inputs, instead of changing their requires_grad
-      // property.
-      if (is_input) {
-        var = var.detach();
-      } else {
-        var.detach_();
-      }
+      var.detach_();
     } else if (is_modified) {
       if (var.is_leaf() && var.requires_grad()) {
         throw std::runtime_error("a leaf Variable that requires grad has been used in an in-place operation.");
       }
       // If the input was modified, transplant the grad_fn in the graph:
       // grad_fn <- variable <- self  ==>  grad_fn <- self <- variable
-      var.grad().reset();
+      var.reset_grad();
       var.clear_hooks();
       if (auto grad_acc_fn = var.try_get_grad_accumulator()) {
         auto grad_acc = dynamic_cast<AccumulateGrad*>(grad_acc_fn.get());
@@ -601,7 +594,7 @@ static void _trace_post_record(
   jit::tracer::postRecordTrace(trace_info, output_vars);
 
   auto state_lock = trace_info.state->lock();
-  trace_info.n->i_(attr::inplace, is_inplace);
+  trace_info.n->i_(kinplace, is_inplace);
 
   // See definition in function.cpp.
   THPObjectPtr passes_py_bool {PyObject_GetAttrString(op_obj, "is_traceable")};
@@ -610,7 +603,7 @@ static void _trace_post_record(
   // NB: this path is executed only for forward of Python functions, so there's no need to check
   // tracing_state->in_eval_subgraph (it's always false, because they are never part of backward
   // subgraphs AND we don't even materialize the forward function).
-  if (trace_info.state->creates_handles && !passes_state_transparently) {
+  if (!passes_state_transparently) {
     // TODO: sgross and ezyang don't know if this is right
     tracer::nontraceableBackwardSubgraph(input_vars, output_vars);
     Function::set_up_context_edge(trace_info.n, input_vars, output_vars);
@@ -918,9 +911,6 @@ PyObject *THPFunction_saved_tensors(THPFunction *self, void *_unused)
 PyObject *THPFunction_saved_variables(THPFunction *self, void *_unused)
 {
   HANDLE_TH_ERRORS
-  auto r = PyErr_WarnEx(PyExc_DeprecationWarning,
-      "'saved_variables' is deprecated; use 'saved_tensors'", 0);
-  if (r != 0) throw python_error();
   return unpack_saved_variables(self, [](const Variable& var) {
     return THPVariable_Wrap(var);
   });

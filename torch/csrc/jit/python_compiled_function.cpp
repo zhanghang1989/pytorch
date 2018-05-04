@@ -1,4 +1,4 @@
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 #include "python_compiled_function.h"
 
@@ -109,7 +109,7 @@ struct CompiledFunction {
       // Start tracing
       AutoGradMode grad_mode(grad_enabled_);
       auto num_stages = grad_enabled_ ? fn_.nderivs_ + 1 : 1;
-      auto enter_info = tracer::enter(input_info.vars, num_stages, true);
+      auto enter_info = tracer::enter(fmap<TraceInput>(input_info.vars), num_stages);
       auto & trace = enter_info.first;
       auto & new_vars = enter_info.second;
 

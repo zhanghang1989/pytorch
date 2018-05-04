@@ -4,7 +4,19 @@
 
 #define TH_TENSOR_REFCOUNTED 1
 
-typedef struct THCTensor THCTensor;
+typedef struct THCTensor
+{
+    int64_t *size;
+    int64_t *stride;
+    int nDimension;
+
+    THCStorage *storage;
+    ptrdiff_t storageOffset;
+    int refcount;
+
+    char flag;
+
+} THCTensor;
 
 
 /**** access methods ****/
@@ -118,6 +130,7 @@ THC_API real THCTensor_(get3d)(THCState *state, const THCTensor *tensor, int64_t
 THC_API real THCTensor_(get4d)(THCState *state, const THCTensor *tensor, int64_t x0, int64_t x1, int64_t x2, int64_t x3);
 
 /* CUDA-specific functions */
+THC_API cudaTextureObject_t THCTensor_(getTextureObject)(THCState *state, THCTensor *self);
 THC_API int THCTensor_(getDevice)(THCState *state, const THCTensor *self);
 THC_API int THCTensor_(checkGPU)(THCState *state, unsigned int nTensors, ...);
 

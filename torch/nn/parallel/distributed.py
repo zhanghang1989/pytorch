@@ -77,7 +77,7 @@ class DistributedDataParallel(Module):
         Parameters are never broadcast between processes. The module performs
         an all-reduce step on gradients and assumes that they will be modified
         by the optimizer in all processes in the same way. Buffers
-        (e.g. BatchNorm stats) are broadcast from the module in process of rank
+        (e.g. BatchNorm stats) are broadcast form the module in process of rank
         0, to all other replicas in the system in every iteration.
 
     .. warning::
@@ -131,13 +131,12 @@ class DistributedDataParallel(Module):
             # TODO: we don't need to replicate params in here. they're always going to
             # be broadcasted using larger blocks in broadcast_coalesced, so it might be
             # better to not pollute the caches with these small blocks
-            self._module_copies = replicate(self.module, self.device_ids, detach=True)
+            self._module_copies = replicate(self.module, self.device_ids)
             self._module_copies[0] = self.module
-
             for module_copy in self._module_copies[1:]:
                 for param, copy_param in zip(self.module.parameters(), module_copy.parameters()):
+                    copy_param.detach_()
                     copy_param.requires_grad = param.requires_grad
-
         else:
             self._module_copies = [self.module]
 
@@ -213,7 +212,7 @@ class DistributedDataParallel(Module):
         self._sync_params()
         if len(self.device_ids) == 1:
             return self.module(*inputs[0], **kwargs[0])
-        outputs = self.parallel_apply(self._module_copies[:len(inputs)], inputs, kwargs)
+        outputs = self.parallel_apply(self._module_copies, inputs, kwargs)
         return self.gather(outputs, self.output_device)
 
     def scatter(self, inputs, kwargs, device_ids):

@@ -89,14 +89,6 @@ void Context::setBenchmarkCuDNN(bool b) {
   benchmark_cudnn = b;
 }
 
-bool Context::hasMKL() const {
-#if AT_MKL_ENABLED()
-  return true;
-#else
-  return false;
-#endif
-}
-
 bool Context::hasCUDA() const {
 #if AT_CUDA_ENABLED()
   int count;
@@ -119,16 +111,6 @@ struct cudaDeviceProp* Context::getCurrentDeviceProperties() const {
 }
 struct cudaDeviceProp* Context::getDeviceProperties(int device) const {
   return THCState_getDeviceProperties(thc_state, device);
-}
-#else
-cudaStream_t Context::getCurrentCUDAStream() const {
-  throw std::runtime_error("ATen not compiled with CUDA");
-}
-struct cudaDeviceProp* Context::getCurrentDeviceProperties() const {
-  throw std::runtime_error("ATen not compiled with CUDA");
-}
-struct cudaDeviceProp* Context::getDeviceProperties(int device) const {
-  throw std::runtime_error("ATen not compiled with CUDA");
 }
 #endif
 

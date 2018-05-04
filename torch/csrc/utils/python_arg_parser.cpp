@@ -1,8 +1,8 @@
 #include "torch/csrc/utils/python_arg_parser.h"
 
 #include <stdexcept>
-#include <sstream>
 #include <unordered_map>
+#include <sstream>
 
 #include "torch/csrc/Exceptions.h"
 #include "torch/csrc/utils/python_strings.h"
@@ -23,11 +23,7 @@ static std::unordered_map<std::string, ParameterType> type_map = {
   {"bool", ParameterType::BOOL},
   {"Storage", ParameterType::STORAGE},
   {"PyObject*", ParameterType::PYOBJECT},
-  {"ScalarType", ParameterType::SCALARTYPE},
-  {"optional<ScalarType>", ParameterType::SCALARTYPE},
-  {"Layout", ParameterType::LAYOUT},
-  {"Device", ParameterType::DEVICE},
-  {"std::string", ParameterType::STRING},
+  {"Type", ParameterType::TYPE},
 };
 
 FunctionParameter::FunctionParameter(const std::string& fmt, bool keyword_only)
@@ -85,8 +81,7 @@ bool FunctionParameter::check(PyObject* obj) {
     case ParameterType::TENSOR: {
       return THPVariable_Check(obj);
     }
-    case ParameterType::SCALAR:
-    case ParameterType::DOUBLE: {
+    case ParameterType::SCALAR: {
       // NOTE: we don't currently accept most NumPy types as Scalars. np.float64
       // is okay because it's a subclass of PyFloat. We may want to change this
       // in the future.
@@ -99,16 +94,8 @@ bool FunctionParameter::check(PyObject* obj) {
       }
       return false;
     }
-    case ParameterType::INT64: {
-      if (THPUtils_checkLong(obj)) {
-        return true;
-      }
-      if (THPVariable_Check(obj)) {
-        auto& var = ((THPVariable*)obj)->cdata;
-        return at::isIntegralType(var.type().scalarType()) && !var.requires_grad() && var.dim() == 0;
-      }
-      return false;
-    }
+    case ParameterType::INT64: return THPUtils_checkLong(obj);
+    case ParameterType::DOUBLE: return THPUtils_checkDouble(obj);
     case ParameterType::TENSOR_LIST: return PyTuple_Check(obj) || PyList_Check(obj);
     case ParameterType::INT_LIST: {
       if (PyTuple_Check(obj) || PyList_Check(obj)) {
@@ -121,11 +108,7 @@ bool FunctionParameter::check(PyObject* obj) {
     case ParameterType::BOOL: return PyBool_Check(obj);
     case ParameterType::STORAGE: return isStorage(obj);
     case ParameterType::PYOBJECT: return true;
-    case ParameterType::SCALARTYPE: return THPDtype_Check(obj);
-    case ParameterType::LAYOUT: return THPLayout_Check(obj);
-    case ParameterType::DEVICE:
-      return THPUtils_checkLong(obj) || THPUtils_checkString(obj) || THPDevice_Check(obj);
-    case ParameterType::STRING: return THPUtils_checkString(obj);
+    case ParameterType::TYPE: return THPDtype_Check(obj);
     default: throw std::runtime_error("unknown parameter type");
   }
 }
@@ -133,7 +116,7 @@ bool FunctionParameter::check(PyObject* obj) {
 std::string FunctionParameter::type_name() const {
   switch (type_) {
     case ParameterType::TENSOR: return "Tensor";
-    case ParameterType::SCALAR: return "Number";
+    case ParameterType::SCALAR: return "float";
     case ParameterType::INT64: return "int";
     case ParameterType::DOUBLE: return "float";
     case ParameterType::TENSOR_LIST: return "tuple of Tensors";
@@ -142,22 +125,10 @@ std::string FunctionParameter::type_name() const {
     case ParameterType::BOOL: return "bool";
     case ParameterType::STORAGE: return "torch.Storage";
     case ParameterType::PYOBJECT: return "object";
-    case ParameterType::SCALARTYPE: return "torch.dtype";
-    case ParameterType::LAYOUT: return "torch.layout";
-    case ParameterType::DEVICE: return "torch.device";
-    case ParameterType::STRING: return "str";
+    case ParameterType::TYPE: return "torch.dtype";
     default: throw std::runtime_error("unknown parameter type");
   }
 }
-
-static inline at::optional<int64_t> parse_as_integer(const std::string& s) {
-  if (s.empty()) return at::nullopt;
-  char *str_end;
-  long ans = strtol(s.c_str(), &str_end, 0);
-  // *str_end == 0 if the entire string was parsed as an integer.
-  return (*str_end == 0) ? at::optional<int64_t>(ans) : at::nullopt;
-}
-
 
 void FunctionParameter::set_default_str(const std::string& str) {
   if (str == "None") {
@@ -179,39 +150,19 @@ void FunctionParameter::set_default_str(const std::string& str) {
       // but allows None.
       default_scalar = Scalar(NAN);
     } else {
-      // we sometimes rely on integer-vs-float values, e.g. with arange.
-      auto as_integer = parse_as_integer(str);
-      default_scalar = Scalar(as_integer.value_or(atof(str.c_str())));
+      default_scalar = Scalar(atof(str.c_str()));
     }
   } else if (type_ == ParameterType::INT_LIST) {
     if (str != "None") {
       default_intlist.assign(size, std::stoi(str));
     }
-  } else if (type_ == ParameterType::SCALARTYPE) {
+  } else if (type_ == ParameterType::TYPE) {
     if (str == "None") {
-      default_scalartype = at::ScalarType::Undefined;
+      default_type = nullptr;
     } else if (str == "torch.int64") {
-      default_scalartype = at::ScalarType::Long;
+      default_type = torch::autograd::VariableType::getType(CPU(kLong));
     } else {
-      throw std::runtime_error("invalid default value for ScalarType: " + str);
-    }
-  } else if (type_ == ParameterType::LAYOUT) {
-    if (str == "None") {
-      default_layout = nullptr;
-    } else if (str == "torch.strided") {
-      default_layout = torch::getLayout(at::Backend::CPU);
-    } else if (str == "torch.sparse_coo") {
-      default_layout = torch::getLayout(at::Backend::SparseCPU);
-    } else {
-      throw std::runtime_error("invalid default value for layout: " + str);
-    }
-  } else if (type_ == ParameterType::DEVICE) {
-    if (str != "None") {
-      throw std::runtime_error("invalid device: " + str);
-    }
-  } else if (type_ == ParameterType::STRING) {
-    if (str != "None" || str != "") {
-      throw std::runtime_error("invalid default string: " + str);
+      throw std::runtime_error("invalid default value for dtype: " + str);
     }
   }
 }
@@ -414,7 +365,7 @@ bool FunctionSignature::parse(PyObject* args, PyObject* kwargs, PyObject* dst[],
     } else if (param.check(obj)) {
       dst[i++] = obj;
     } else if (allow_varargs_intlist && arg_pos == 0 && !is_kwd &&
-               THPUtils_checkIndex(obj)) {
+               THPUtils_checkLong(obj)) {
       // take all positional arguments as this parameter
       // e.g. permute(1, 2, 3) -> permute((1, 2, 3))
       dst[i++] = args;

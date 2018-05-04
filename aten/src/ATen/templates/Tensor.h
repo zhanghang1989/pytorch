@@ -12,13 +12,7 @@
 
 namespace at {
 struct Type;
-struct Tensor;
-namespace detail {
-void set_data(Tensor& tensor, Tensor new_data);
-} // namespace detail
-} // namespace at
 
-namespace at {
 // Tensor is a "generic" object holding a pointer to the underlying TensorImpl object, which
 // has an embedded reference count. In this way, Tensor is similar to boost::intrusive_ptr.
 //
@@ -109,7 +103,7 @@ struct Tensor : public detail::TensorBase {
   template<typename T, size_t N>
   TensorAccessor<T,N> accessor() {
     static_assert(N > 0, "accessor is used for indexing tensor, for scalars use *data<T>()");
-    AT_CHECK(dim() == N, "expected ", N, " dims but tensor has ", dim());
+    AT_ASSERT(dim() == N, "expected %d dims but tensor has %d",N,dim());
     return TensorAccessor<T,N>(data<T>(),sizes().data(),strides().data());
   }
 
@@ -122,34 +116,7 @@ struct Tensor : public detail::TensorBase {
   Tensor& operator*=(Scalar other);
   Tensor& operator/=(const Tensor & other);
   Tensor& operator/=(Scalar other);
-  Tensor operator[](Scalar index) const;
-  Tensor operator[](Tensor index) const;
-  Tensor operator[](int64_t index) const;
-
-  // ~~~~~ Autograd API ~~~~~
-
-  void set_requires_grad(bool requires_grad) {
-    pImpl->set_requires_grad(requires_grad);
-  }
-  bool requires_grad() const {
-    return pImpl->requires_grad();
-  }
-
-  Tensor& grad() {
-    return pImpl->grad();
-  }
-  const Tensor& grad() const {
-    return pImpl->grad();
-  }
-
-  Tensor detach() const {
-    return pImpl->detach();
-  }
-  void detach_() {
-    pImpl->detach_();
-  }
-
-  friend void detail::set_data(Tensor& tensor, Tensor new_data);
+  Tensor operator[](int64_t idx) const;
 
   // STOP.  Thinking of adding a method here, which only makes use
   // of other ATen methods?  Define it in native_functions.yaml.
@@ -157,16 +124,6 @@ struct Tensor : public detail::TensorBase {
   //example
   //Tensor * add(Tensor & b);
   ${tensor_method_declarations}
-
-  template <typename F, typename... Args> 
-  auto m(F func, Args&&... params) const -> decltype(func(*this, std::forward<Args>(params)...)) {
-    return func(*this, std::forward<Args>(params)...);
-  } 
 };
 
-namespace detail {
-inline void set_data(Tensor& tensor, Tensor new_data) {
-  tensor.pImpl->set_data(new_data);
-}
-} // namespace detail
-} // namespace at
+} //namespace at

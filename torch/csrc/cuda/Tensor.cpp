@@ -1,6 +1,6 @@
 #define __STDC_FORMAT_MACROS
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <structmember.h>
 
 #include <TH/THMath.h>

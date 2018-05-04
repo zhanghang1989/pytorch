@@ -12,7 +12,7 @@ foreach(THC_TYPE Byte Char Short Int Long Half Float Double)
    foreach(THC_FILE TensorSort TensorMathCompareT TensorMathPointwise TensorMathCompare TensorMathReduce TensorMasked)
       if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/THC${THC_FILE}${THC_TYPE}.cu")
          FILE(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/generated/THC${THC_FILE}${THC_TYPE}.cu"
-           "#include \"../THC${THC_FILE}.cuh\"\n#include \"THCTensor.hpp\"\n#include \"THCStream.hpp\"\n#include \"../generic/THC${THC_FILE}.cu\"\n#include \"../THCGenerate${THC_TYPE}Type.h\"\n")
+              "#include \"../THC${THC_FILE}.cuh\"\n#include \"../generic/THC${THC_FILE}.cu\"\n#include \"../THCGenerate${THC_TYPE}Type.h\"\n")
       endif()
       LIST(APPEND extra_src "${CMAKE_CURRENT_SOURCE_DIR}/generated/THC${THC_FILE}${THC_TYPE}.cu")
    endforeach()
@@ -111,24 +111,19 @@ INSTALL(FILES
           THCThrustAllocator.cuh
           THCTensorMode.cuh
           THCTensorTopK.cuh
-          THCCachingAllocator.h
-          THCGenerator.hpp
-          THCTensor.hpp
-          THCStream.hpp
-          THCStorage.hpp
           DESTINATION "${ATEN_INSTALL_INCLUDE_SUBDIR}/THC")
 
 INSTALL(FILES
-          generic/THCStorage.cpp
+          generic/THCStorage.c
           generic/THCStorage.cu
           generic/THCStorage.h
-          generic/THCTensor.cpp
+          generic/THCTensor.c
           generic/THCTensor.cu
           generic/THCTensor.h
-          generic/THCStorageCopy.cpp
+          generic/THCStorageCopy.c
           generic/THCStorageCopy.cu
           generic/THCStorageCopy.h
-          generic/THCTensorCopy.cpp
+          generic/THCTensorCopy.c
           generic/THCTensorCopy.cu
           generic/THCTensorCopy.h
           generic/THCTensorMasked.h
@@ -164,7 +159,4 @@ INSTALL(FILES
           generic/THCTensorMode.cu
           generic/THCTensorTopK.h
           generic/THCTensorTopK.cu
-          # See Note [TH abstraction violation]
-          generic/THCStorage.hpp
-          generic/THCTensor.hpp
           DESTINATION "${ATEN_INSTALL_INCLUDE_SUBDIR}/THC/generic")

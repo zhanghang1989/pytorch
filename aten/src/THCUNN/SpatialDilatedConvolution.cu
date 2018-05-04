@@ -4,8 +4,6 @@
 
 #include "THCHalf.h"
 #include "THCHalfAutoNumerics.cuh"
-#include "THCTensor.hpp"
-#include "THCStorage.hpp"
 
 #include "generic/SpatialDilatedConvolution.cu"
 #include "THCGenerateFloatTypes.h"

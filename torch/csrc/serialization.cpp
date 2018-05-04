@@ -1,4 +1,4 @@
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <system_error>
 
 #include "THP.h"

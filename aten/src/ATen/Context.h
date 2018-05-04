@@ -1,11 +1,9 @@
 #pragma once
 
 #include "ATen/ATenGeneral.h"
-#include <ATen/CPUGeneral.h>
 #include "ATen/Generator.h"
 #include "ATen/Type.h"
 #include "ATen/Utils.h"
-#include "ATen/Error.h"
 
 #include <memory>
 #include <mutex>
@@ -33,7 +31,7 @@ public:
         auto & undef = type_registry[static_cast<int>(Backend::Undefined)][static_cast<int>(ScalarType::Undefined)];
         if (undef) return *undef;
       }
-      AT_ERROR(toString(p), toString(s), "Type is not enabled.");
+      runtime_error("%s%sType is not enabled.",toString(p),toString(s));
     }
     return *type;
   }
@@ -41,10 +39,9 @@ public:
     initCUDAIfNeeded(p);
     auto & generator = generator_registry[static_cast<int>(p)];
     if(!generator)
-      AT_ERROR(toString(p), " backend type not enabled.");
+      runtime_error("%s backend type not enabled.",toString(p));
     return *generator;
   }
-  bool hasMKL() const;
   bool hasCUDA() const;
   int64_t current_device() const;
   // defined in header so that getType has ability to inline
@@ -96,16 +93,10 @@ AT_API Context & globalContext();
 
 static inline void init() {
   globalContext();
-  if (const char *env_p = std::getenv("OMP_NUM_THREADS")) {
-    at::set_num_threads(std::stoi(env_p));
-  }
-  if (const char *env_p = std::getenv("MKL_NUM_THREADS")) {
-    at::set_num_threads(std::stoi(env_p));
-  }
 }
 
 static inline Type& getType(Backend p, ScalarType s) {
-  return globalContext().getType(p, s);
+  return globalContext().getType(p,s);
 }
 
 static inline Type& CPU(ScalarType s) {
@@ -118,10 +109,6 @@ static inline Type& CUDA(ScalarType s) {
 
 static inline bool hasCUDA() {
   return globalContext().hasCUDA();
-}
-
-static inline bool hasMKL() {
-  return globalContext().hasMKL();
 }
 
 static inline int64_t current_device() {

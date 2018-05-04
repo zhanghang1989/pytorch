@@ -41,8 +41,6 @@ struct Engine {
 
   static Engine& getDefaultEngine();
 
-  bool is_checkpoint_valid();
-
 protected:
   void compute_dependencies(Function* root, GraphTask& task);
   void evaluate_function(FunctionTask& task);

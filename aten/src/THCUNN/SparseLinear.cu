@@ -1,7 +1,6 @@
 #include "THCUNN.h"
 #include "THCHalf.h"
 #include "THCHalfAutoNumerics.cuh"
-#include "THCTensor.hpp"
 
 #include <cusparse.h>
 

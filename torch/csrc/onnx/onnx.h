@@ -13,7 +13,7 @@
 namespace torch { namespace onnx {
 
 using DataType = onnx_TensorProto_DataType;
-using Dimension = onnx_TensorShapeProto_Dimension;
+using Dimension = onnx_TypeProto_TensorShapeProto_Dimension;
 
 // Note [Unique vector]
 // ~~~~~~~~~~~~~~~~~~~~
@@ -188,8 +188,8 @@ DEFINE_CONST(GRAPHS)
 // These are NOT COMPLETE wrappers. If you find something is missing, add it!
 
 class AttributeProto;
-class TensorShapeProto;
-class TypeProtoTensor;
+class TypeProtoTensorShapeProto;
+class TypeProtoTensorTypeProto;
 class TensorProto;
 class TypeProto;
 class ValueInfoProto;
@@ -202,7 +202,6 @@ private:
   std::string name; // namespace ValueInfoProto.
   unique_vector<int64_t> dims;
   at::Tensor raw_data;
-  std::string dump_;
 public:
   TensorProto() : MicroProto(onnx_TensorProto_init_default) {
     proto.dims       = list<int64_t>(&dims);
@@ -211,17 +210,14 @@ public:
   void add_dims(int64_t d) { dims.emplace_back(new int64_t(d)); }
   // Google Protobuf divergence!
   void set_raw_data(const at::Tensor& t) { proto.raw_data = string_from_tensor(&raw_data, t); }
-  void set_external_data_present() { proto.raw_data = string(&dump_, "__EXTERNAL"); }
   void set_data_type(onnx_TensorProto_DataType t) { proto.has_data_type = true; proto.data_type = t; }
-  std::string get_name() const { return name; }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
-class TensorShapeProto : public MicroProto<onnx_TensorShapeProto> {
+class TypeProtoTensorShapeProto : public MicroProto<onnx_TypeProto_TensorShapeProto> {
 private:
   unique_vector<Dimension> dims;
 public:
-  TensorShapeProto() : MicroProto(onnx_TensorShapeProto_init_default) {
+  TypeProtoTensorShapeProto() : MicroProto(onnx_TypeProto_TensorShapeProto_init_default) {
     proto.dim = list<Dimension>(&dims);
   }
   void add_dim(std::int64_t d) {
@@ -230,32 +226,29 @@ public:
     p_d->dim_value = d;
     dims.emplace_back(p_d);
   }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
-class TypeProtoTensor : public MicroProto<onnx_TypeProto_Tensor> {
+class TypeProtoTensorTypeProto : public MicroProto<onnx_TypeProto_TensorTypeProto> {
 private:
-  std::unique_ptr<TensorShapeProto> shape;
+  std::unique_ptr<TypeProtoTensorShapeProto> shape;
 public:
-  TypeProtoTensor() : MicroProto(onnx_TypeProto_Tensor_init_default) {}
+  TypeProtoTensorTypeProto() : MicroProto(onnx_TypeProto_TensorTypeProto_init_default) {}
   void set_data_type(onnx_TensorProto_DataType t) { proto.has_elem_type = true; proto.elem_type = t; }
-  TensorShapeProto* mutable_shape() {
-    proto.shape = msg<TensorShapeProto, onnx_TensorShapeProto_fields>(&shape);
+  TypeProtoTensorShapeProto* mutable_shape() {
+    proto.shape = msg<TypeProtoTensorShapeProto, onnx_TypeProto_TensorShapeProto_fields>(&shape);
     return shape.get();
   }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class TypeProto : public MicroProto<onnx_TypeProto> {
 private:
-  std::unique_ptr<TypeProtoTensor> tensor_type;
+  std::unique_ptr<TypeProtoTensorTypeProto> tensor_type;
 public:
   TypeProto() : MicroProto(onnx_TypeProto_init_default) {}
-  TypeProtoTensor* mutable_tensor_type() {
-    proto.tensor_type = msg<TypeProtoTensor, onnx_TypeProto_Tensor_fields>(&tensor_type);
+  TypeProtoTensorTypeProto* mutable_tensor_type() {
+    proto.tensor_type = msg<TypeProtoTensorTypeProto, onnx_TypeProto_TensorTypeProto_fields>(&tensor_type);
     return tensor_type.get();
   }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class ValueInfoProto : public MicroProto<onnx_ValueInfoProto> {
@@ -270,7 +263,6 @@ public:
     proto.type = msg<TypeProto, onnx_TypeProto_fields>(&type);
     return type.get();
   }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class AttributeProto : public MicroProto<onnx_AttributeProto> {
@@ -309,13 +301,11 @@ public:
     return ptr;
   }
   GraphProto* add_graphs();
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class NodeProto : public MicroProto<onnx_NodeProto> {
 private:
   std::string op_type;
-  std::string domain;
   std::string doc_string;
   unique_vector<std::string> inputs;
   unique_vector<std::string> outputs;
@@ -335,10 +325,8 @@ public:
     attributes.emplace_back(ptr);
     return ptr;
   }
-  void set_op_type(const std::string& s) { proto.op_type = string(&op_type, s); }
-  void set_domain(const std::string& s) { proto.domain = string(&domain, s); }
+  void set_op_type(const std::string& s) { proto.op_type= string(&op_type, s); }
   void set_doc_string(const std::string& s) { proto.doc_string = string(&doc_string, s); }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class GraphProto : public MicroProto<onnx_GraphProto> {
@@ -377,7 +365,6 @@ public:
     initializers.emplace_back(ptr);
     return ptr;
   }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class OperatorSetIdProto : public MicroProto<onnx_OperatorSetIdProto> {
@@ -387,7 +374,6 @@ public:
   OperatorSetIdProto() : MicroProto(onnx_OperatorSetIdProto_init_default) {}
   void set_domain(const std::string& s) { proto.domain = string(&domain, s); }
   void set_version(int64_t v) { proto.has_version = true; proto.version = v; }
-  void dump(std::ostream& stream, size_t indent = 0);
 };
 
 class ModelProto : public MicroProto<onnx_ModelProto> {
@@ -416,12 +402,6 @@ public:
     auto ptr = new OperatorSetIdProto();
     opset_import.emplace_back(ptr);
     return ptr;
-  }
-  void dump(std::ostream& stream, size_t indent = 0);
-  std::string prettyPrint() {
-    std::stringstream ss;
-    dump(ss, 0);
-    return ss.str();
   }
 };
 

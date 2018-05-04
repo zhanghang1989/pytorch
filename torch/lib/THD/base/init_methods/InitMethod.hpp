@@ -5,8 +5,6 @@
 #include <string>
 #include <stdexcept>
 #include <tuple>
-#include <unordered_map>
-
 
 namespace thd {
 
@@ -64,15 +62,6 @@ struct InitMethod {
     }
   };
 };
-
-namespace init {
-
-using InitMethodFuncMap =
-  std::unordered_map<std::string,
-  std::function<::thd::InitMethod::Config(std::string, int, std::string, int)>>;
-
-} // namespace init
-
 
 InitMethod::Config getInitConfig(std::string argument, int world_size = -1,
                                  std::string group_name = "", int rank = -1);

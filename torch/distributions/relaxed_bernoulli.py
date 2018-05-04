@@ -1,5 +1,6 @@
 import torch
 from numbers import Number
+from torch.autograd import Variable
 from torch.distributions import constraints
 from torch.distributions.distribution import Distribution
 from torch.distributions.transformed_distribution import TransformedDistribution
@@ -25,10 +26,10 @@ class LogitRelaxedBernoulli(Distribution):
     [2] Categorical Reparametrization with Gumbel-Softmax
     (Jang et al, 2017)
     """
-    arg_constraints = {'probs': constraints.unit_interval}
+    params = {'probs': constraints.unit_interval}
     support = constraints.real
 
-    def __init__(self, temperature, probs=None, logits=None, validate_args=None):
+    def __init__(self, temperature, probs=None, logits=None):
         self.temperature = temperature
         if (probs is None) == (logits is None):
             raise ValueError("Either `probs` or `logits` must be specified, but not both.")
@@ -43,7 +44,7 @@ class LogitRelaxedBernoulli(Distribution):
             batch_shape = torch.Size()
         else:
             batch_shape = self._param.size()
-        super(LogitRelaxedBernoulli, self).__init__(batch_shape, validate_args=validate_args)
+        super(LogitRelaxedBernoulli, self).__init__(batch_shape)
 
     def _new(self, *args, **kwargs):
         return self._param.new(*args, **kwargs)
@@ -67,8 +68,7 @@ class LogitRelaxedBernoulli(Distribution):
         return (uniforms.log() - (-uniforms).log1p() + probs.log() - (-probs).log1p()) / self.temperature
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         logits, value = broadcast_all(self.logits, value)
         diff = logits - value.mul(self.temperature)
         return self.temperature.log() + diff - 2 * diff.exp().log1p()
@@ -82,8 +82,8 @@ class RelaxedBernoulli(TransformedDistribution):
 
     Example::
 
-        >>> m = RelaxedBernoulli(torch.tensor([2.2]),
-                                 torch.tensor([0.1, 0.2, 0.3, 0.99]))
+        >>> m = RelaxedBernoulli(torch.Tensor([2.2]),
+                                 torch.Tensor([0.1, 0.2, 0.3, 0.99]))
         >>> m.sample()
          0.2951
          0.3442
@@ -96,13 +96,13 @@ class RelaxedBernoulli(TransformedDistribution):
         probs (Number, Tensor): the probabilty of sampling `1`
         logits (Number, Tensor): the log-odds of sampling `1`
     """
-    arg_constraints = {'probs': constraints.unit_interval}
+    params = {'probs': constraints.unit_interval}
     support = constraints.unit_interval
     has_rsample = True
 
-    def __init__(self, temperature, probs=None, logits=None, validate_args=None):
+    def __init__(self, temperature, probs=None, logits=None):
         super(RelaxedBernoulli, self).__init__(LogitRelaxedBernoulli(temperature, probs, logits),
-                                               SigmoidTransform(), validate_args=validate_args)
+                                               SigmoidTransform())
 
     @property
     def temperature(self):

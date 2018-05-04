@@ -25,7 +25,7 @@
 from __future__ import print_function
 import os
 import sys
-from .utils import CodeTemplate, nested_dict, write, uninplace_api_name
+from .utils import CodeTemplate, nested_dict, write
 from .gen_autograd import VIEW_FUNCTIONS, template_path, \
     HARDCODED_DIFFERENTIABLE_OUTPUTS
 from .gen_autograd_functions import uses_single_grad
@@ -93,7 +93,7 @@ if (compute_requires_grad( ${args_with_derivatives} )) {
 """)
 
 ASSIGN_GRAD_FN = CodeTemplate("""\
-grad_fn = std::shared_ptr<${op}>(new ${op}(${op_ctor}), deleteFunction);
+grad_fn = std::make_shared<${op}>(${op_ctor});
 grad_fn->set_next_edges(collect_next_edges( ${args_with_derivatives} ));
 """)
 
@@ -119,7 +119,7 @@ profiler::RecordFunction profiler("${name}");""")
 PRE_RECORD_TRACE = CodeTemplate("""\
 jit::tracer::PreTraceInfo trace_info;
 if (jit::tracer::isTracing( ${tensor_args} )) {
-  trace_info = jit::tracer::preRecordTrace( jit::aten::${trace_name}, ${trace_inputs} );
+  trace_info = jit::tracer::preRecordTrace( "${trace_name}", ${trace_inputs} );
   ${record_attributes}
 }
 """)
@@ -131,7 +131,7 @@ if (trace_info.state != nullptr) {
 """)
 
 RECORD_ATTRIBUTE = CodeTemplate("""\
-        setattr(trace_info.n, jit::attr::${name}, ${name});""")
+setattr(trace_info.n, jit::Symbol("${name}"), ${name});""")
 
 
 def gen_variable_type(out, aten_declarations):
@@ -318,8 +318,7 @@ def emit_body(declaration):
     def emit_record_trace(env):
         # Operations involving Generator, Storage, Type are not traceable
         # at the moment
-        if any(arg['simple_type'] in {'Generator', 'Storage', 'ScalarType', 'Type', 'optional<ScalarType>'}
-               for arg in declaration['arguments']):
+        if any(arg['simple_type'] in {'Generator', 'Storage', 'Type'} for arg in declaration['arguments']):
             return ('', '')
         # We can't trace functions which don't have any Tensor or TensorList returns
         if 'Tensor' not in declaration['return_type']:
@@ -368,11 +367,9 @@ def emit_body(declaration):
                 continue
             local['record_attributes'].append(RECORD_ATTRIBUTE.substitute(name=arg['name']))
 
-        # Record inplace operations as out-of-place operations (e.g.,
-        # not add_ but add)
-        # TODO: Add a proper concept of side effects to the IR, and
-        # properly record inplace operations.
-        local['trace_name'] = uninplace_api_name(declaration['api_name'])
+        local['trace_name'] = declaration['api_name']
+        if local['trace_name'].endswith('_'):
+            local['trace_name'] = local['trace_name'][:-1]
 
         local['trace_outputs'] = get_trace_outputs(declaration)
 

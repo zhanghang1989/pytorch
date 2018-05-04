@@ -1,4 +1,5 @@
 import torch
+from torch.autograd import Variable
 from torch.distributions import constraints
 from torch.distributions.categorical import Categorical
 from torch.distributions.utils import clamp_probs, broadcast_all, log_sum_exp
@@ -27,16 +28,16 @@ class ExpRelaxedCategorical(Distribution):
     [2] Categorical Reparametrization with Gumbel-Softmax
     (Jang et al, 2017)
     """
-    arg_constraints = {'probs': constraints.simplex}
+    params = {'probs': constraints.simplex}
     support = constraints.real
     has_rsample = True
 
-    def __init__(self, temperature, probs=None, logits=None, validate_args=None):
+    def __init__(self, temperature, probs=None, logits=None):
         self._categorical = Categorical(probs, logits)
         self.temperature = temperature
         batch_shape = self._categorical.batch_shape
         event_shape = self._categorical.param_shape[-1:]
-        super(ExpRelaxedCategorical, self).__init__(batch_shape, event_shape, validate_args=validate_args)
+        super(ExpRelaxedCategorical, self).__init__(batch_shape, event_shape)
 
     def _new(self, *args, **kwargs):
         return self._categorical._new(*args, **kwargs)
@@ -62,8 +63,7 @@ class ExpRelaxedCategorical(Distribution):
 
     def log_prob(self, value):
         K = self._categorical._num_events
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         logits, value = broadcast_all(self.logits, value)
         log_scale = (self.temperature.new(self.temperature.shape).fill_(K).lgamma() -
                      self.temperature.log().mul(-(K - 1)))
@@ -80,8 +80,8 @@ class RelaxedOneHotCategorical(TransformedDistribution):
 
     Example::
 
-        >>> m = RelaxedOneHotCategorical(torch.tensor([2.2]),
-                                         torch.tensor([0.1, 0.2, 0.3, 0.4]))
+        >>> m = RelaxedOneHotCategorical(torch.Tensor([2.2]),
+                                         torch.Tensor([0.1, 0.2, 0.3, 0.4]))
         >>> m.sample()  # equal probability of 1, 1, 2, 3
          0.1294
          0.2324
@@ -94,13 +94,13 @@ class RelaxedOneHotCategorical(TransformedDistribution):
         probs (Tensor): event probabilities
         logits (Tensor): the log probability of each event.
     """
-    arg_constraints = {'probs': constraints.simplex}
+    params = {'probs': constraints.simplex}
     support = constraints.simplex
     has_rsample = True
 
-    def __init__(self, temperature, probs=None, logits=None, validate_args=None):
+    def __init__(self, temperature, probs=None, logits=None):
         super(RelaxedOneHotCategorical, self).__init__(ExpRelaxedCategorical(temperature, probs, logits),
-                                                       ExpTransform(), validate_args=validate_args)
+                                                       ExpTransform())
 
     @property
     def temperature(self):

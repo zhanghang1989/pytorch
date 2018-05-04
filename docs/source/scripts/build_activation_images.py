@@ -15,10 +15,13 @@ import pylab
 
 
 # Create a directory for the images, if it doesn't exist
+DOCS_PATH = os.path.realpath(os.path.join(__file__, "../../.."))
 ACTIVATION_IMAGE_PATH = os.path.join(
-    os.path.realpath(os.path.join(__file__, "..")),
-    "activation_images"
+    DOCS_PATH,
+    "source/_static/img/activation/"
 )
+
+print(ACTIVATION_IMAGE_PATH)
 
 if not os.path.exists(ACTIVATION_IMAGE_PATH):
     os.mkdir(ACTIVATION_IMAGE_PATH)

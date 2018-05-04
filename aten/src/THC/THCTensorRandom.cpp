@@ -1,5 +1,4 @@
 #include "THCTensorRandom.h"
-#include "THCGenerator.hpp"
 
 #include <random>
 #include <curand.h>
@@ -12,16 +11,15 @@ void createGeneratorState(THCGenerator* gen, uint64_t seed);
 /* Frees memory allocated during setup. */
 void destroyGenerator(THCState *state, THCGenerator* gen)
 {
-  std::lock_guard<std::mutex> lock(gen->mutex);
-  if (gen->state.gen_states)
+  if (gen->gen_states)
   {
-    THCudaCheck(THCudaFree(state, gen->state.gen_states));
-    gen->state.gen_states = NULL;
+    THCudaCheck(THCudaFree(state, gen->gen_states));
+    gen->gen_states = NULL;
   }
-  if (gen->state.kernel_params)
+  if (gen->kernel_params)
   {
-    THCudaCheck(THCudaFree(state, gen->state.kernel_params));
-    gen->state.kernel_params = NULL;
+    THCudaCheck(THCudaFree(state, gen->kernel_params));
+    gen->kernel_params = NULL;
   }
 }
 
@@ -41,12 +39,11 @@ void THCRandom_init(THCState* state, int devices, int current_device)
   std::random_device rd;
   for (int i = 0; i < rng_state->num_devices; ++i)
   {
-    new (&rng_state->gen[i].mutex) std::mutex();
-    rng_state->gen[i].state.initf = 0;
-    rng_state->gen[i].state.initial_seed = createSeed(rd);
-    rng_state->gen[i].state.philox_seed_offset = 0;
-    rng_state->gen[i].state.gen_states = NULL;
-    rng_state->gen[i].state.kernel_params = NULL;
+    rng_state->gen[i].initf = 0;
+    rng_state->gen[i].initial_seed = createSeed(rd);
+    rng_state->gen[i].philox_seed_offset = 0;
+    rng_state->gen[i].gen_states = NULL;
+    rng_state->gen[i].kernel_params = NULL;
   }
 }
 
@@ -77,20 +74,18 @@ static THCGenerator* THCRandom_rawGenerator(THCState* state)
 THCGenerator* THCRandom_getGenerator(THCState* state)
 {
   THCGenerator* gen = THCRandom_rawGenerator(state);
-  std::lock_guard<std::mutex> lock(gen->mutex);
-  if (gen->state.initf == 0)
+  if (gen->initf == 0)
   {
     initializeGenerator(state, gen);
-    createGeneratorState(gen, gen->state.initial_seed);
-    gen->state.initf = 1;
+    createGeneratorState(gen, gen->initial_seed);
+    gen->initf = 1;
   }
   return gen;
 }
 
 struct curandStateMtgp32* THCRandom_generatorStates(struct THCState* state)
 {
-  THCGenerator* gen = THCRandom_getGenerator(state);
-  return gen->state.gen_states;
+  return THCRandom_getGenerator(state)->gen_states;
 }
 
 /* Random seed */
@@ -114,9 +109,8 @@ uint64_t THCRandom_seedAll(THCState* state)
 void THCRandom_manualSeed(THCState* state, uint64_t seed)
 {
   THCGenerator* gen = THCRandom_rawGenerator(state);
-  std::lock_guard<std::mutex> lock(gen->mutex);
-  gen->state.initial_seed = seed;
-  if (gen->state.initf) {
+  gen->initial_seed = seed;
+  if (gen->initf) {
     createGeneratorState(gen, seed);
   }
 }
@@ -136,6 +130,5 @@ void THCRandom_manualSeedAll(THCState* state, uint64_t seed)
 /* Get the initial seed */
 uint64_t THCRandom_initialSeed(THCState* state)
 {
-  THCGenerator* gen = THCRandom_getGenerator(state);
-  return gen->state.initial_seed;
+  return THCRandom_getGenerator(state)->initial_seed;
 }

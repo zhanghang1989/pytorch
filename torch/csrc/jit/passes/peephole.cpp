@@ -14,25 +14,21 @@ void PeepholeOptimize(Block * block) {
   for (auto it = block->nodes().begin(); it != block->nodes().end(); ++it) {
     auto* n = *it;
 
-    for (Block * sub_block : n->blocks()) {
-        PeepholeOptimize(sub_block);
-    }
-
     // XXX: remember that if you want to simplify an expression by combining multiple nodes
     // into a different one, then you need to check that they all belong to the given block
     switch (n->kind()) {
-      case aten::expand:
+      case kexpand:
         // Eliminate redundant expand
         if (!n->input()->isTensor()) break;
-        if (n->is(attr::size) == n->input()->type()->expect<TensorType>()->sizes()) {
+        if (n->is(ksize) == n->input()->type()->expect<TensorType>()->sizes()) {
           n->output()->replaceAllUsesWith(n->input());
           it.destroyCurrent();
         }
         break;
-      case aten::t:
+      case kt:
         // x.t().t() == x
         auto input_node = n->input()->node();
-        if (input_node->kind() == aten::t)  {
+        if (input_node->kind() == kt)  {
           n->output()->replaceAllUsesWith(input_node->input());
           it.destroyCurrent();
           // The previous transpose might be unnecessary now.
@@ -45,6 +41,10 @@ void PeepholeOptimize(Block * block) {
           }
         }
         break;
+    }
+
+    for (Block * sub_block : n->blocks()) {
+      PeepholeOptimize(sub_block);
     }
   }
 }

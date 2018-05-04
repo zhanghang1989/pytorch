@@ -367,8 +367,13 @@ PyObject * THPStorage_(newWithWeakPtr)(PyObject *_unused, PyObject *arg)
   THPUtils_assert(THPUtils_checkLong(ref.get()),
       "_new_with_weak_ptr(): arg.cdata must be an 'int'");
   THStorage *storage = (THStorage*)PyLong_AsVoidPtr(ref.get());
-  if (THStorage_(retainIfLive)(LIBRARY_STATE storage)) {
-    return THPStorage_(New)(storage);
+  // increment refcount only if it's positive
+  int refcount = THAtomicGet(&storage->refcount);
+  while (refcount > 0) {
+    if (THAtomicCompareAndSwap(&storage->refcount, refcount, refcount + 1)) {
+      return THPStorage_(New)(storage);
+    }
+    refcount = THAtomicGet(&storage->refcount);
   }
   Py_RETURN_NONE;
   END_HANDLE_TH_ERRORS

@@ -2,8 +2,6 @@
 #include "THCTensorMath.h"
 #include "THCTensorCopy.h"
 #include "THCGeneral.h"
-#include "THCTensor.hpp"
-#include "THCStorage.hpp"
 #include <stdio.h>
 
 /*

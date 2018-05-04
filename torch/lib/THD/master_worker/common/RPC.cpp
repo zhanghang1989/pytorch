@@ -7,8 +7,7 @@
 #include <memory>
 #include <stdexcept>
 
-namespace thd {
-namespace rpc {
+namespace thd { namespace rpc {
 
 RPCMessage::RPCMessage()
   : _msg(0)
@@ -140,7 +139,7 @@ THLongStorage* unpackTHLongStorage(RPCMessage& raw_message) {
   if (is_null) return NULL;
   ptrdiff_t size = unpackScalar<ptrdiff_t>(raw_message);
   THLongStorage* storage = THLongStorage_newWithSize(size);
-  int64_t* data = THLongStorage_data(storage);
+  int64_t* data = storage->data;
 
   try {
     for (int i = 0; i < size; i++) {

@@ -29,8 +29,7 @@ void THNN_(TemporalUpSamplingLinear_updateOutput)(
     THNNState *state,
     THTensor *input,
     THTensor *output,
-    int outputWidth,
-    bool align_corners){
+    int outputWidth){
 
   int nbatch = THTensor_(size)(input, 0);
   int channels = THTensor_(size)(input, 1);
@@ -42,9 +41,9 @@ void THNN_(TemporalUpSamplingLinear_updateOutput)(
      inputWidth, outputWidth);
 
   input = THTensor_(newContiguous)(input);
-  THTensor_(resize3d)(output,
-		      THTensor_(size)(input, 0),
-		      THTensor_(size)(input, 1),
+  THTensor_(resize3d)(output, 
+		      THTensor_(size)(input, 0), 
+		      THTensor_(size)(input, 1), 
 		      outputWidth);
   THTensor_(zero)(output);
   real *idata = THTensor_(data)(input);
@@ -65,9 +64,9 @@ void THNN_(TemporalUpSamplingLinear_updateOutput)(
     }
     return;
   }
-  const float rwidth = THNN_(linear_upsampling_compute_scale)(inputWidth, outputWidth, align_corners);
+  const float rwidth = (outputWidth > 1) ? (float)(inputWidth - 1) / (outputWidth - 1) : 0.f;
   for (int w2 = 0; w2 < outputWidth; ++w2) {
-    const float w1r = THNN_(linear_upsampling_compute_source_index)(rwidth, w2, align_corners);
+    const float w1r = rwidth * w2;
     const int w1 = w1r;
     const int w1p = (w1 < inputWidth - 1) ? 1 : 0;
     const real w1lambda = w1r - w1;
@@ -90,8 +89,7 @@ void THNN_(TemporalUpSamplingLinear_updateGradInput)(
     int nbatch,
     int channels,
     int inputWidth,
-    int outputWidth,
-    bool align_corners){
+    int outputWidth){
 
   THNN_(TemporalUpSamplingLinear_shapeCheck)
     (NULL, gradOutput,
@@ -120,9 +118,9 @@ void THNN_(TemporalUpSamplingLinear_updateGradInput)(
     }
     return;
   }
-  const float rwidth = THNN_(linear_upsampling_compute_scale)(inputWidth, outputWidth, align_corners);
+  const float rwidth = (outputWidth > 1) ? (float)(inputWidth - 1)/(outputWidth - 1) : 0.f;
   for (int w2 = 0; w2 < outputWidth; ++w2) {
-    const float w1r = THNN_(linear_upsampling_compute_source_index)(rwidth, w2, align_corners);
+    const float w1r = rwidth * w2;
     const int w1 = w1r;
     const int w1p = (w1 < inputWidth - 1) ? 1 : 0;
     const real w1lambda = w1r - w1;

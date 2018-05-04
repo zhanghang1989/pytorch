@@ -13,7 +13,7 @@ class Beta(ExponentialFamily):
 
     Example::
 
-        >>> m = Beta(torch.tensor([0.5]), torch.tensor([0.5]))
+        >>> m = Beta(torch.Tensor([0.5]), torch.Tensor([0.5]))
         >>> m.sample()  # Beta distributed with concentration concentration1 and concentration0
          0.1046
         [torch.FloatTensor of size 1]
@@ -24,18 +24,18 @@ class Beta(ExponentialFamily):
         concentration0 (float or Tensor): 2nd concentration parameter of the distribution
             (often referred to as beta)
     """
-    arg_constraints = {'concentration1': constraints.positive, 'concentration0': constraints.positive}
+    params = {'concentration1': constraints.positive, 'concentration0': constraints.positive}
     support = constraints.unit_interval
     has_rsample = True
 
-    def __init__(self, concentration1, concentration0, validate_args=None):
+    def __init__(self, concentration1, concentration0):
         if isinstance(concentration1, Number) and isinstance(concentration0, Number):
-            concentration1_concentration0 = torch.tensor([float(concentration1), float(concentration0)])
+            concentration1_concentration0 = torch.tensor([concentration1, concentration0])
         else:
             concentration1, concentration0 = broadcast_all(concentration1, concentration0)
             concentration1_concentration0 = torch.stack([concentration1, concentration0], -1)
         self._dirichlet = Dirichlet(concentration1_concentration0)
-        super(Beta, self).__init__(self._dirichlet._batch_shape, validate_args=validate_args)
+        super(Beta, self).__init__(self._dirichlet._batch_shape)
 
     @property
     def mean(self):
@@ -50,12 +50,11 @@ class Beta(ExponentialFamily):
     def rsample(self, sample_shape=()):
         value = self._dirichlet.rsample(sample_shape).select(-1, 0)
         if isinstance(value, Number):
-            value = self._dirichlet.concentration.new_tensor(value)
+            value = self._dirichlet.concentration.new([value])
         return value
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         heads_tails = torch.stack([value, 1.0 - value], -1)
         return self._dirichlet.log_prob(heads_tails)
 

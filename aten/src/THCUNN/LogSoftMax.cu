@@ -1,6 +1,5 @@
 #include "THCUNN.h"
 #include "THCHalf.h"
-#include "THCTensor.hpp"
 
 #include "SoftMaxCommon.cuh"
 

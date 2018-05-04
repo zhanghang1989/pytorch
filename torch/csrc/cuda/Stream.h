@@ -1,8 +1,9 @@
 #ifndef THCP_STREAM_INC
 #define THCP_STREAM_INC
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <THC/THC.h>
+
 
 struct THCPStream {
   PyObject_HEAD

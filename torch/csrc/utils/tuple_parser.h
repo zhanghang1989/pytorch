@@ -1,6 +1,6 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include <memory>
 #include <vector>
 #include <ATen/ATen.h>

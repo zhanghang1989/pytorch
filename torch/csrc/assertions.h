@@ -2,7 +2,6 @@
 
 #include <exception>
 #include <string>
-#include "THP_export.h"
 
 namespace torch {
 
@@ -13,7 +12,7 @@ struct assert_error final : public std::exception {
 };
 
 [[noreturn]]
-THP_CLASS void barf(const char *fmt, ...);
+void barf(const char *fmt, ...);
 
 } // namespace torch
 

@@ -1,7 +1,5 @@
 .. currentmodule:: torch.sparse
 
-.. _sparse-docs:
-
 torch.sparse
 ============
 

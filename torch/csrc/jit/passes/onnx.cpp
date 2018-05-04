@@ -25,16 +25,19 @@ bool hasUsedHandle(Node *node) {
 
 // Transform PythonOps and Cpp Ops into Node's that match ONNX semantics.
 // Argument aten indicates whether we should export ops as "ATen" ONNX ops if possible.
-std::shared_ptr<Graph> ToONNX(std::shared_ptr<Graph>& graph, bool aten) {
-  auto new_graph = std::make_shared<Graph>(graph->scope_root());
-  std::unordered_map<Value*, Value*> env;
-  BlockToONNX(graph->block(), new_graph->block(), aten, env);
-  return new_graph;
-}
+void ToONNX(std::shared_ptr<tracer::TracingState>& state, bool aten) {
+  // Check that the tracing state is live (it should be, because
+  // you were supposed to request zero derivatives.)
+  if (state->is_expired()) {
+    throw std::logic_error("ToONNX: tracing state is expired");
+  }
 
-void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_map<Value*, Value*> env) {
+  auto new_graph = std::make_shared<Graph>(state->graph->scope_root());
+  std::unordered_map<void*, Value*> new_buffer_map;
+
   torch::autograd::SymbolicContext ctx;
-  ctx.block = new_block;
+  ctx.graph = new_graph.get();
+  std::unordered_map<Value*, Value*> env;
 
   py::object onnx = py::module::import("torch.onnx");
   py::object onnx_symbolic = py::module::import("torch.onnx.symbolic");
@@ -48,11 +51,15 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
   };
 
   // Initialize context and environment
-  for (auto input : old_block->inputs()) {
-    auto n = ctx.block->addInput()->copyMetadata(input);
+  for (auto input : state->graph->inputs()) {
+    auto n = ctx.graph->addInput()->copyMetadata(input);
     n->setStage(input->stage());
     env[input] = n;
   }
+  for (auto kv : state->buffer_map) {
+    new_buffer_map[kv.first] = envFn(kv.second);
+  }
+
   // Put the new outputs in our environment map, and copy the type from the
   // input graph if they were not set by the symbolic. This is called only
   // with results of symbolic call (not for nodes that are just cloned).
@@ -100,9 +107,8 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
 
   // Clone the node and add it to the new graph
   auto cloneNode = [&](Node * node) {
-    auto n_ = ctx.block->appendNode(ctx.block->owningGraph()->createClone(node, envFn));
+    auto n_ = ctx.graph->appendNode(ctx.graph->createClone(node, envFn));
     for(size_t i = 0; i < node->outputs().size(); i++) {
-      // n_->outputs()[i]->setType(node->outputs()[i]->type());
       env[node->outputs()[i]] = n_->outputs()[i];
     }
   };
@@ -142,25 +148,17 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
         py_inputs[input_nr++] = py::cast(envFn(input));
     }
 
-    WithInsertPoint insert_point_guard(ctx.block);
-    WithCurrentScope scope_guard(*ctx.block->owningGraph(), n->scope());
-    py::object raw_output = onnx.attr("_run_symbolic_function")(ctx.block->owningGraph(), n, py_inputs, env, aten);
+    WithCurrentScope scope_guard(*ctx.graph, n->scope());
+    py::object raw_output = onnx.attr("_run_symbolic_function")(ctx.graph, n, py_inputs, aten);
 
-    // TODO: Assert it's an ATen identifier???
-    // (Sometimes it's not...)
-    processSymbolicOutput(n->kind().toUnqualString(), n, raw_output);
+    processSymbolicOutput(n->kind().toString(), n, raw_output);
   };
 
   auto callPySymbolicMethod = [&](PythonOp* op) {
 
     // Test if there is a symbolic function; bail if there is not
     auto pyobj = py::handle(op->pyobj.get());
-    auto func = op->autogradFunction();
-    if(func) {
-      pyobj = func->get();
-    }
-
-    if(!py::hasattr(pyobj, "symbolic")) {
+    if (!py::hasattr(pyobj, "symbolic")) {
       cloneNode(op);
       return;
     }
@@ -169,7 +167,7 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
     // by regular args, with Variables replaced by corresponding nodes.
     Py_ssize_t input_nr = 0;
     py::tuple py_symbolic_args(1 + op->cconv.size());
-    py_symbolic_args[input_nr++] = py::cast(ctx.block->owningGraph());
+    py_symbolic_args[input_nr++] = py::cast(ctx.graph);
     auto inputs = op->inputs();
     auto node_it = inputs.begin();
     auto scalar_it = op->scalar_args.begin();
@@ -187,8 +185,7 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
       py_symbolic_args[input_nr++] = obj;
     }
 
-    WithInsertPoint insert_point_guard(ctx.block);
-    WithCurrentScope scope_guard(*ctx.block->owningGraph(), op->scope());
+    WithCurrentScope scope_guard(*ctx.graph, op->scope());
     // Call the symbolic function
     // Use a little trampoline function so we can give good error messages
     // upon argument mismatch
@@ -198,7 +195,7 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
   };
 
   // Finally, visit all nodes in the graph
-  for (auto node : old_block->nodes()) {
+  for (auto node : state->graph->nodes()) {
     if (hasUsedHandle(node)) {
       // Nothing we can do here. The handle is used, so we'll need to capture the
       // original state and can't do anything with this op (we don't know what the
@@ -207,22 +204,29 @@ void BlockToONNX(Block* old_block, Block* new_block, bool aten, std::unordered_m
       continue;
     }
     // Needed so that symbolic calls create nodes with correct stages.
-    auto stage_guard = ctx.block->owningGraph()->setStageTemporary(node->stage());
+    auto stage_guard = new_graph->setStageTemporary(node->stage());
     IR_IFM(node, CppOp)
       cloneNode(node);
     IR_ELSEIFM(PythonOp)
       callPySymbolicMethod(value);
     IR_ELSE()
-      callPySymbolicFunction(node);
+      if (node->kind() == kUndefined) {
+        // Undefined nodes get passed into Convolution, but then they are
+        // removed.  We'll test for leftover Undefined in export.cpp
+        cloneNode(node);
+      } else {
+        callPySymbolicFunction(node);
+      }
     IR_END()
   }
-  for (auto output : old_block->outputs()) {
-    ctx.block->registerOutput(env.at(output));
-    env.at(output)->setType(output->type());
+  for (auto output : state->graph->outputs()) {
+    ctx.graph->registerOutput(env.at(output));
   }
 
   // Copy stage from original graph
-  ctx.block->owningGraph()->setStage(old_block->owningGraph()->stage());
+  new_graph->setStage(state->graph->stage());
+  state->graph = std::move(new_graph);
+  state->buffer_map = std::move(new_buffer_map);
 }
 
 }}

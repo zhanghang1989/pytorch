@@ -18,9 +18,7 @@ class TransformedDistribution(Distribution):
     maximum shape of its base distribution and its transforms, since transforms
     can introduce correlations among events.
     """
-    arg_constraints = {}
-
-    def __init__(self, base_distribution, transforms, validate_args=None):
+    def __init__(self, base_distribution, transforms):
         self.base_dist = base_distribution
         if isinstance(transforms, Transform):
             self.transforms = [transforms, ]
@@ -34,7 +32,11 @@ class TransformedDistribution(Distribution):
         event_dim = max([len(self.base_dist.event_shape)] + [t.event_dim for t in self.transforms])
         batch_shape = shape[:len(shape) - event_dim]
         event_shape = shape[len(shape) - event_dim:]
-        super(TransformedDistribution, self).__init__(batch_shape, event_shape, validate_args=validate_args)
+        super(TransformedDistribution, self).__init__(batch_shape, event_shape)
+
+    @constraints.dependent_property
+    def params(self):
+        return self.base_dist.params  # TODO add params of transforms?
 
     @constraints.dependent_property
     def support(self):
@@ -74,17 +76,17 @@ class TransformedDistribution(Distribution):
         Scores the sample by inverting the transform(s) and computing the score
         using the score of the base distribution and the log abs det jacobian.
         """
+        self.base_dist._validate_log_prob_arg(value)
         event_dim = len(self.event_shape)
         log_prob = 0.0
         y = value
         for transform in reversed(self.transforms):
             x = transform.inv(y)
-            log_prob = log_prob - _sum_rightmost(transform.log_abs_det_jacobian(x, y),
-                                                 event_dim - transform.event_dim)
+            log_prob -= _sum_rightmost(transform.log_abs_det_jacobian(x, y),
+                                       event_dim - transform.event_dim)
             y = x
-
-        log_prob = log_prob + _sum_rightmost(self.base_dist.log_prob(y),
-                                             event_dim - len(self.base_dist.event_shape))
+        log_prob += _sum_rightmost(self.base_dist.log_prob(y),
+                                   event_dim - len(self.base_dist.event_shape))
         return log_prob
 
     def _monotonize_cdf(self, value):
@@ -106,8 +108,6 @@ class TransformedDistribution(Distribution):
         """
         for transform in self.transforms[::-1]:
             value = transform.inv(value)
-        if self._validate_args:
-            self.base_dist._validate_sample(value)
         value = self.base_dist.cdf(value)
         value = self._monotonize_cdf(value)
         return value
@@ -118,8 +118,6 @@ class TransformedDistribution(Distribution):
         transform(s) and computing the score of the base distribution.
         """
         value = self._monotonize_cdf(value)
-        if self._validate_args:
-            self.base_dist._validate_sample(value)
         value = self.base_dist.icdf(value)
         for transform in self.transforms:
             value = transform(value)

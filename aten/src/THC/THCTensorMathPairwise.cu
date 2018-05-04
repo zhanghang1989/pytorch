@@ -5,7 +5,6 @@
 #include "THCApply.cuh"
 #include "THCNumerics.cuh"
 #include "THCTensorMathCompareT.cuh"
-#include "THCTensor.hpp"
 
 template <typename T>
 struct TensorAddConstantOp {
@@ -241,33 +240,19 @@ struct TensorDivConstantOp<half> {
 };
 #endif // CUDA_HALF_TENSOR
 
-template<typename T>
-static __device__ __forceinline__
-typename std::enable_if<std::is_signed<T>::value, bool>::type
-modulo_wrap(T a, T b) {
-  return (a != 0) && (a < 0) != (b < 0);
-}
-
-template<typename T>
-static __device__ __forceinline__
-typename std::enable_if<std::is_unsigned<T>::value, bool>::type
-modulo_wrap(T a, T b) {
-  return false;
-}
-
 template <typename T>
 struct TensorRemainderOp {
   TensorRemainderOp(T v) : val(v) {}
   __device__ __forceinline__ void operator()(T* out, T* in) {
     *out = *in % val;
-    if (modulo_wrap<T>(*out, val)) {
+    if ((*out * val) < 0){
       *out += val;
     }
   }
 
   __device__ __forceinline__ void operator()(T* v) {
     *v = *v % val;
-    if (modulo_wrap<T>(*v, val)) {
+    if ((*v * val) < 0){
       *v += val;
     }
   }

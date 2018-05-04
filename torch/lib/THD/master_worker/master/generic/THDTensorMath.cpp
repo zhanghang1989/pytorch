@@ -497,7 +497,7 @@ void THDTensor_(catArray)(THDTensor *result, THDTensor **inputs,
       }
     }
     allEmpty = allEmpty && !dimSize;
-    THLongStorage_set(size, i, dimSize);
+    size->data[i] = dimSize;
   }
 
   if (!allEmpty) {
@@ -600,9 +600,7 @@ TENSOR_IMPLEMENT_POINTWISE_FUNCTION(abs,Abs)
 #if defined(TH_REAL_IS_DOUBLE) || defined(TH_REAL_IS_FLOAT)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(sigmoid,Sigmoid)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(log,Log)
-TENSOR_IMPLEMENT_POINTWISE_FUNCTION(log10,Log10)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(log1p,Log1p)
-TENSOR_IMPLEMENT_POINTWISE_FUNCTION(log2, Log2)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(exp,Exp)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(expm1,Expm1)
 TENSOR_IMPLEMENT_POINTWISE_FUNCTION(cos,Cos)
@@ -866,22 +864,22 @@ void THDTensor_(bhistc)(THDTensor *hist, THDTensor *tensor, int64_t nbins,
 
 #if defined(TH_REAL_IS_BYTE)
 
-int THDTensor_(logicalAnd)(THDTensor *tensor) {
+int THDTensor_(logicalall)(THDTensor *tensor) {
   THArgCheck(tensor->nDimension > 0, 1, "empty Tensor");
 
   masterCommandChannel->sendMessage(
-    packMessage(Functions::tensorLogicalAnd, tensor),
+    packMessage(Functions::tensorLogicalall, tensor),
     THDState::s_current_worker
   );
 
   return receiveValueFromWorker<int>(THDState::s_current_worker);
 }
 
-int THDTensor_(logicalAny)(THDTensor *tensor) {
+int THDTensor_(logicalany)(THDTensor *tensor) {
   THArgCheck(tensor->nDimension > 0, 1, "empty Tensor");
 
   masterCommandChannel->sendMessage(
-    packMessage(Functions::tensorLogicalAny, tensor),
+    packMessage(Functions::tensorLogicalany, tensor),
     THDState::s_current_worker
   );
 

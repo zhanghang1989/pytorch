@@ -2,7 +2,7 @@
 #define TH_GENERIC_FILE "generic/THTensorRandom.cpp"
 #else
 
-#include "THGenerator.hpp"
+#include "THGenerator.h"
 
 void THTensor_(random)(THTensor *self, THGenerator *_generator)
 {
@@ -33,11 +33,11 @@ void THTensor_(clampedRandom)(THTensor *self, THGenerator *_generator, int64_t m
   uint64_t range = max - min;
 #if defined(TH_REAL_IS_LONG) || defined(TH_REAL_IS_FLOAT) || defined(TH_REAL_IS_DOUBLE)
     if (range >= 1ULL << 32) {
-      TH_TENSOR_APPLY(real, self, *self_data = static_cast<real>(static_cast<int64_t>((THRandom_random64(_generator) % range) + min));)
+      TH_TENSOR_APPLY(real, self, *self_data = (real)((THRandom_random64(_generator) % range) + min);)
       return;
     }
 #endif
-    TH_TENSOR_APPLY(real, self, *self_data = static_cast<real>(static_cast<int64_t>((THRandom_random(_generator) % range) + min));)
+    TH_TENSOR_APPLY(real, self, *self_data = (real)((THRandom_random(_generator) % range) + min);)
 }
 
 void THTensor_(cappedRandom)(THTensor *self, THGenerator *_generator, int64_t max) {
@@ -136,6 +136,16 @@ void THTensor_(exponential)(THTensor *self, THGenerator *_generator, double lamb
 {
   std::lock_guard<std::mutex> lock(_generator->mutex);
   TH_TENSOR_APPLY(real, self, *self_data = (real)THRandom_exponential(_generator, lambda););
+}
+
+void THTensor_(standard_gamma)(THTensor *self, THGenerator *_generator, THTensor *alpha)
+{
+  std::lock_guard<std::mutex> lock(_generator->mutex);
+  THTensor_(resizeAs)(self, alpha);
+  TH_TENSOR_APPLY2(real, self, real, alpha, {
+    const real sample = THRandom_standard_gamma(_generator, *alpha_data);
+    *self_data = sample > 0 ? sample : TH_REAL_MIN;
+  });
 }
 
 #undef TH_REAL_MIN

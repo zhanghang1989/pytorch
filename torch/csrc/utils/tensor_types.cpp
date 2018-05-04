@@ -1,13 +1,11 @@
-#include <Python.h>
-
 #include "tensor_types.h"
+
+#include <sstream>
+#include <unordered_map>
 
 #include "torch/csrc/autograd/generated/VariableType.h"
 #include "torch/csrc/Exceptions.h"
 #include "torch/csrc/tensor/python_tensor.h"
-
-#include <sstream>
-#include <unordered_map>
 
 using namespace at;
 

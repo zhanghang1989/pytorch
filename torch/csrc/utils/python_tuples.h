@@ -1,6 +1,6 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 #include "torch/csrc/Exceptions.h"
 #include "torch/csrc/utils/object_ptr.h"
 #include "torch/csrc/utils/python_numbers.h"

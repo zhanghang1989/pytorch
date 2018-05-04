@@ -1,5 +1,3 @@
 #include "../THCTensorMathCompare.cuh"
-#include "THCTensor.hpp"
-#include "THCStream.hpp"
 #include "../generic/THCTensorMathCompare.cu"
 #include "../THCGenerateShortType.h"

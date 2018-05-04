@@ -17,8 +17,6 @@ from .geometric import Geometric
 from .gumbel import Gumbel
 from .laplace import Laplace
 from .log_normal import LogNormal
-from .logistic_normal import LogisticNormal
-from .multivariate_normal import MultivariateNormal, _batch_mahalanobis, _batch_diag, _batch_inverse
 from .normal import Normal
 from .one_hot_categorical import OneHotCategorical
 from .pareto import Pareto
@@ -26,7 +24,7 @@ from .poisson import Poisson
 from .transformed_distribution import TransformedDistribution
 from .uniform import Uniform
 from .utils import _sum_rightmost
-from torch.autograd import Variable
+from torch.autograd import Variable, variable
 
 _KL_REGISTRY = {}  # Source of truth mapping a few general (type, type) pairs to functions.
 _KL_MEMOIZE = {}  # Memoized version mapping many specific (type, type) pairs to functions.
@@ -114,7 +112,10 @@ def _infinite_like(tensor):
     """
     Helper function for obtaining infinite KL Divergence throughout
     """
-    return tensor.new_tensor(float('inf')).expand_as(tensor)
+    if isinstance(tensor, Variable):
+        return tensor.new_tensor(float('inf')).expand_as(tensor)
+    else:
+        return tensor.new([float('inf')]).expand_as(tensor)
 
 
 def _x_log_x(tensor):
@@ -122,15 +123,6 @@ def _x_log_x(tensor):
     Utility function for calculating x log x
     """
     return tensor * tensor.log()
-
-
-def _batch_trace_XXT(bmat):
-    """
-    Utility function for calculating the trace of XX^{T} with X having arbitrary trailing batch dimensions
-    """
-    mat_size = bmat.size(-1)
-    flat_trace = bmat.reshape(-1, mat_size * mat_size).pow(2).sum(-1)
-    return flat_trace.view(bmat.shape[:-2])
 
 
 def kl_divergence(p, q):
@@ -198,12 +190,12 @@ def _kl_beta_beta(p, q):
 def _kl_binomial_binomial(p, q):
     # from https://math.stackexchange.com/questions/2214993/
     # kullback-leibler-divergence-for-binomial-distributions-p-and-q
-    if (p.total_count < q.total_count).any():
+    if p.total_count > q.total_count:
+        return _infinite_like(p.probs)
+    elif p.total_count == q.total_count:
+        return p.total_count * (p.probs * (p.logits - q.logits) + (-p.probs).log1p() - (-q.probs).log1p())
+    else:
         raise NotImplementedError('KL between Binomials where q.total_count > p.total_count is not implemented')
-    kl = p.total_count * (p.probs * (p.logits - q.logits) + (-p.probs).log1p() - (-q.probs).log1p())
-    inf_idxs = p.total_count > q.total_count
-    kl[inf_idxs] = _infinite_like(kl[inf_idxs])
-    return kl
 
 
 @register_kl(Categorical, Categorical)
@@ -285,19 +277,6 @@ def _kl_laplace_laplace(p, q):
     return t1 + t2 + t3 - 1
 
 
-@register_kl(MultivariateNormal, MultivariateNormal)
-def _kl_multivariatenormal_multivariatenormal(p, q):
-    # From https://en.wikipedia.org/wiki/Multivariate_normal_distribution#Kullback%E2%80%93Leibler_divergence
-    if p.event_shape != q.event_shape:
-        raise ValueError("KL-divergence between two Multivariate Normals with\
-                          different event shapes cannot be computed")
-
-    term1 = _batch_diag(q.scale_tril).log().sum(-1) - _batch_diag(p.scale_tril).log().sum(-1)
-    term2 = _batch_trace_XXT(torch.matmul(_batch_inverse(q.scale_tril), p.scale_tril))
-    term3 = _batch_mahalanobis(q.scale_tril, (q.loc - p.loc))
-    return term1 + 0.5 * (term2 + term3 - p.event_shape[0])
-
-
 @register_kl(Normal, Normal)
 def _kl_normal_normal(p, q):
     var_ratio = (p.scale / q.scale).pow(2)
@@ -331,12 +310,7 @@ def _kl_poisson_poisson(p, q):
 def _kl_transformed_transformed(p, q):
     if p.transforms != q.transforms:
         raise NotImplementedError
-    if p.event_shape != q.event_shape:
-        raise NotImplementedError
-    # extra_event_dim = len(p.event_shape) - len(p.base_dist.event_shape)
-    extra_event_dim = len(p.event_shape)
-    base_kl_divergence = kl_divergence(p.base_dist, q.base_dist)
-    return _sum_rightmost(base_kl_divergence, extra_event_dim)
+    return kl_divergence(p.base_dist, q.base_dist)
 
 
 @register_kl(Uniform, Uniform)

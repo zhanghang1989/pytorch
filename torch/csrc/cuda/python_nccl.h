@@ -1,6 +1,6 @@
 #pragma once
 
-#include "torch/csrc/python_headers.h"
+#include <Python.h>
 
 PyObject * THCPModule_nccl_version(PyObject *self, PyObject *args);
 PyObject * THCPModule_nccl_unique_id(PyObject *self, PyObject *args);

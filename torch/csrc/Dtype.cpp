@@ -8,21 +8,42 @@
 #include "torch/csrc/utils/tensor_dtypes.h"
 #include "torch/csrc/utils/tensor_types.h"
 
-PyObject * THPDtype_New(at::ScalarType scalar_type, const std::string& name)
+PyObject * THPDtype_New(at::Type* cdata, const std::string& name, bool is_cuda, bool is_sparse)
 {
   auto type = (PyTypeObject*)&THPDtypeType;
   auto self = THPObjectPtr{type->tp_alloc(type, 0)};
   if (!self) throw python_error();
   auto self_ = reinterpret_cast<THPDtype*>(self.get());
-  self_->scalar_type = scalar_type;
+  self_->cdata = cdata;
   std::strncpy (self_->name, name.c_str(), DTYPE_NAME_LEN);
   self_->name[DTYPE_NAME_LEN] = '\0';
+  self_->is_cuda = is_cuda;
+  self_->is_sparse = is_sparse;
   return self.release();
 }
 
-PyObject *THPDtype_is_floating_point(THPDtype *self)
+PyObject *THPDtype_repr(THPDtype *self)
 {
-  if (at::isFloatingType(self->scalar_type)) {
+  return THPUtils_packString(self->name);
+}
+
+PyObject *THPDtype_get_cdata(THPDtype *self)
+{
+  return PyLong_FromVoidPtr(self->cdata);
+}
+
+PyObject *THPDtype_is_cuda(THPDtype *self)
+{
+  if (self->is_cuda) {
+    Py_RETURN_TRUE;
+  } else {
+    Py_RETURN_FALSE;
+  }
+}
+
+PyObject *THPDtype_is_sparse(THPDtype *self)
+{
+  if (self->is_sparse) {
     Py_RETURN_TRUE;
   } else {
     Py_RETURN_FALSE;
@@ -32,14 +53,11 @@ PyObject *THPDtype_is_floating_point(THPDtype *self)
 typedef PyObject *(*getter)(PyObject *, void *);
 
 static struct PyGetSetDef THPDtype_properties[] = {
-  {"is_floating_point", (getter)THPDtype_is_floating_point, nullptr, nullptr, nullptr},
+  {"_cdata",       (getter)THPDtype_get_cdata, nullptr, nullptr, nullptr},
+  {"is_cuda",      (getter)THPDtype_is_cuda, nullptr, nullptr, nullptr},
+  {"is_sparse",    (getter)THPDtype_is_sparse, nullptr, nullptr, nullptr},
   {nullptr}
 };
-
-PyObject *THPDtype_repr(THPDtype *self)
-{
-  return THPUtils_packString(self->name);
-}
 
 PyTypeObject THPDtypeType = {
   PyVarObject_HEAD_INIT(nullptr, 0)
@@ -82,13 +100,11 @@ PyTypeObject THPDtypeType = {
   0,                                     /* tp_new */
 };
 
-void THPDtype_init(PyObject *module)
+bool THPDtype_init(PyObject *module)
 {
-  if (PyType_Ready(&THPDtypeType) < 0) {
-    throw python_error();
-  }
+  if (PyType_Ready(&THPDtypeType) < 0)
+    return false;
   Py_INCREF(&THPDtypeType);
-  if (PyModule_AddObject(module, "dtype", (PyObject *)&THPDtypeType) != 0) {
-    throw python_error();
-  }
+  PyModule_AddObject(module, "dtype", (PyObject *)&THPDtypeType);
+  return true;
 }

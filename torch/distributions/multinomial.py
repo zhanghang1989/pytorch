@@ -1,5 +1,6 @@
 import torch
 from torch.distributions.distribution import Distribution
+from torch.autograd import Variable
 from torch.distributions import Categorical
 from numbers import Number
 from torch.distributions import constraints
@@ -24,7 +25,7 @@ class Multinomial(Distribution):
 
     Example::
 
-        >>> m = Multinomial(100, torch.tensor([ 1, 1, 1, 1]))
+        >>> m = Multinomial(100, torch.Tensor([ 1, 1, 1, 1]))
         >>> x = m.sample()  # equal probability of 0, 1, 2, 3
          21
          24
@@ -32,7 +33,7 @@ class Multinomial(Distribution):
          25
         [torch.FloatTensor of size 4]]
 
-        >>> Multinomial(probs=torch.tensor([1, 1, 1, 1])).log_prob(x)
+        >>> Multinomial(probs=torch.Tensor([1, 1, 1, 1])).log_prob(x)
         -4.1338
         [torch.FloatTensor of size 1]
 
@@ -41,7 +42,7 @@ class Multinomial(Distribution):
         probs (Tensor): event probabilities
         logits (Tensor): event log probabilities
     """
-    arg_constraints = {'logits': constraints.real}  # Let logits be the canonical parameterization.
+    params = {'logits': constraints.real}  # Let logits be the canonical parameterization.
 
     @property
     def mean(self):
@@ -51,14 +52,14 @@ class Multinomial(Distribution):
     def variance(self):
         return self.total_count * self.probs * (1 - self.probs)
 
-    def __init__(self, total_count=1, probs=None, logits=None, validate_args=None):
+    def __init__(self, total_count=1, probs=None, logits=None):
         if not isinstance(total_count, Number):
             raise NotImplementedError('inhomogeneous total_count is not supported')
         self.total_count = total_count
         self._categorical = Categorical(probs=probs, logits=logits)
         batch_shape = self._categorical.batch_shape
         event_shape = self._categorical.param_shape[-1:]
-        super(Multinomial, self).__init__(batch_shape, event_shape, validate_args=validate_args)
+        super(Multinomial, self).__init__(batch_shape, event_shape)
 
     def _new(self, *args, **kwargs):
         return self._categorical._new(*args, **kwargs)
@@ -92,8 +93,7 @@ class Multinomial(Distribution):
         return counts.type_as(self.probs)
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         logits, value = broadcast_all(self.logits.clone(), value)
         log_factorial_n = torch.lgamma(value.sum(-1) + 1)
         log_factorial_xs = torch.lgamma(value + 1).sum(-1)

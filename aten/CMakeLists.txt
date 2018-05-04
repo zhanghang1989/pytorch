@@ -1,24 +1,14 @@
-if (CAFFE2_CMAKE_BUILDING_WITH_MAIN_REPO)
-  if (NOT BUILD_ATEN)
-    return()
-  endif()
-else()
-  cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
-  project(ATen CXX C)
-endif()
-
-# Find modules
-list(APPEND CMAKE_MODULE_PATH
+cmake_minimum_required(VERSION 3.0)
+set(CMAKE_MODULE_PATH
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindCUDA
   /usr/lib/x86_64-linux-gnu/
-  ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/Modules
-  ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/Modules_CUDA_fix)
-list(APPEND CMAKE_LIBRARY_PATH /usr/lib/x86_64-linux-gnu/)
-
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/TH/cmake
+  ${CMAKE_MODULE_PATH})
+SET(CMAKE_LIBRARY_PATH /usr/lib/x86_64-linux-gnu/ ${CMAKE_LIBRARY_PATH})
+project(ATen)
 
 cmake_policy(SET CMP0012 NEW)
-
-# Polyfill for upstream FindCUDA
-include(CMakeInitializeConfigs)
 
 # RPATH stuff
 # see https://cmake.org/Wiki/CMake_RPATH_handling
@@ -35,21 +25,12 @@ if("${isSystemDir}" STREQUAL "-1")
   set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 endif()
 
-if(NOT MSVC)
-  set(CMAKE_CXX_FLAGS "--std=c++11 ${CMAKE_CXX_FLAGS}")
-endif()
+IF(NOT MSVC)
+  set(CMAKE_CXX_FLAGS "--std=c++11 -Wall -Wno-unknown-pragmas -Wno-vla -fexceptions ${CMAKE_CXX_FLAGS}")
+  set(CMAKE_C_FLAGS "-fexceptions ${CMAKE_C_FLAGS}")
+ENDIF(NOT MSVC)
 
 INCLUDE(CheckCXXSourceCompiles)
-
-# disable some verbose warnings
-IF (MSVC)
-  set(CMAKE_CXX_FLAGS "/wd4267 /wd4251 /wd4522 /wd4522 /wd4838 /wd4305 /wd4244 /wd4190 /wd4101 /wd4996 /wd4275 ${CMAKE_CXX_FLAGS}")
-ENDIF(MSVC)
-
-# windef.h will define max/min macros if NOMINMAX is not defined
-IF(MSVC)
-  add_definitions(/DNOMINMAX)
-ENDIF(MSVC)
 
 #Check if certain std functions are supported. Sometimes
 #_GLIBCXX_USE_C99 macro is not defined and some functions are missing.
@@ -80,22 +61,16 @@ endif()
 # Flags
 # When using MSVC
 
-# Detect CUDA architecture and get best NVCC flags
+# Detect CUDA architecture and get best NVCC flags
 # finding cuda must be first because other things depend on the result
-#
-# NB: We MUST NOT run this find_package if NO_CUDA is set, because upstream
-# FindCUDA has a bug where it will still attempt to make use of NOTFOUND
-# compiler variables to run various probe tests.  We could try to fix
-# this, but since FindCUDA upstream is subsumed by first-class support
-# for CUDA language, it seemed not worth fixing.
-IF(NOT CUDA_FOUND AND NOT NO_CUDA)
+IF(NOT CUDA_FOUND)
   FIND_PACKAGE(CUDA 5.5)
 ENDIF()
 
 IF(MSVC)
   # we want to respect the standard, and we are bored of those **** .
   ADD_DEFINITIONS(-D_CRT_SECURE_NO_DEPRECATE=1)
-  LIST(APPEND CUDA_NVCC_FLAGS "-Xcompiler /wd4819 -Xcompiler /wd4503 -Xcompiler /wd4190 -Xcompiler /wd4244 -Xcompiler /wd4251 -Xcompiler /wd4275 -Xcompiler /wd4522")
+  LIST(APPEND CUDA_NVCC_FLAGS "-Xcompiler /wd4819 -Xcompiler /wd4503")
   ADD_DEFINITIONS(-DTH_EXPORTS)
   IF (NOT NO_CUDA)
     ADD_DEFINITIONS(-DTHC_EXPORTS)
@@ -127,7 +102,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif()
 
 IF(NOT COMMAND CUDA_SELECT_NVCC_ARCH_FLAGS)
-  INCLUDE(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/Modules_CUDA_fix/FindCUDA/select_compute_arch.cmake)
+  INCLUDE(${CMAKE_CURRENT_SOURCE_DIR}/cmake/select_compute_arch.cmake)
 ENDIF()
 LIST(APPEND CUDA_NVCC_FLAGS $ENV{TORCH_NVCC_FLAGS})
 CUDA_SELECT_NVCC_ARCH_FLAGS(NVCC_FLAGS_EXTRA $ENV{TORCH_CUDA_ARCH_LIST})
@@ -138,8 +113,8 @@ ENDIF()
 
 IF(CUDA_HAS_FP16 OR NOT ${CUDA_VERSION} LESS 7.5)
   MESSAGE(STATUS "Found CUDA with FP16 support, compiling with torch.CudaHalfTensor")
-  LIST(APPEND CUDA_NVCC_FLAGS "-DCUDA_HAS_FP16=1 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__")
-  add_compile_options(-DCUDA_HAS_FP16=1)
+  LIST(APPEND CUDA_NVCC_FLAGS "-DCUDA_HAS_FP16=1 -D__CUDA_NO_HALF_OPERATORS__")
+  SET(CMAKE_C_FLAGS "-DCUDA_HAS_FP16=1 ${CMAKE_C_FLAGS}")
 ELSE(CUDA_HAS_FP16 OR NOT ${CUDA_VERSION} LESS 7.5)
   MESSAGE(STATUS "Could not find CUDA with FP16 support, compiling without torch.CudaHalfTensor")
 ENDIF(CUDA_HAS_FP16 OR NOT ${CUDA_VERSION} LESS 7.5)
@@ -169,7 +144,7 @@ IF (APPLE AND CMAKE_COMPILER_IS_GNUCC)
   IF (APPLE_OPENMP_SUCKS AND GCC_VERSION VERSION_LESS 4.6.2)
     MESSAGE(STATUS "Warning: Disabling OpenMP (unstable with this version of GCC)")
     MESSAGE(STATUS " Install GCC >= 4.6.2 or change your OS to enable OpenMP")
-    add_compile_options(-Wno-unknown-pragmas)
+    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unknown-pragmas")
     SET(WITH_OPENMP OFF CACHE BOOL "OpenMP support if available?" FORCE)
   ENDIF ()
 ENDIF ()
@@ -219,18 +194,18 @@ ENDIF()
 FIND_PACKAGE(ARM)
 IF (ASIMD_FOUND)
   MESSAGE(STATUS "asimd/Neon found with compiler flag : -D__NEON__")
-  add_compile_options(-D__NEON__)
+  SET(CMAKE_C_FLAGS "-D__NEON__ ${CMAKE_C_FLAGS}")
 ELSEIF (NEON_FOUND)
   MESSAGE(STATUS "Neon found with compiler flag : -mfpu=neon -D__NEON__")
-  add_compile_options(-mfpu=neon -D__NEON__)
+  SET(CMAKE_C_FLAGS "-mfpu=neon -D__NEON__ ${CMAKE_C_FLAGS}")
 ENDIF (ASIMD_FOUND)
 IF (CORTEXA8_FOUND)
   MESSAGE(STATUS "Cortex-A8 Found with compiler flag : -mcpu=cortex-a8")
-  add_compile_options(-mcpu=cortex-a8 -fprefetch-loop-arrays)
+  SET(CMAKE_C_FLAGS "-mcpu=cortex-a8 -fprefetch-loop-arrays ${CMAKE_C_FLAGS}")
 ENDIF (CORTEXA8_FOUND)
 IF (CORTEXA9_FOUND)
   MESSAGE(STATUS "Cortex-A9 Found with compiler flag : -mcpu=cortex-a9")
-  add_compile_options(-mcpu=cortex-a9)
+  SET(CMAKE_C_FLAGS "-mcpu=cortex-a9 ${CMAKE_C_FLAGS}")
 ENDIF (CORTEXA9_FOUND)
 
 IF(UNIX)
@@ -271,7 +246,7 @@ IF(HAVE_CPUID_H)
         }" HAVE_GCC_GET_CPUID)
 ENDIF()
 IF(HAVE_GCC_GET_CPUID)
-  add_compile_options(-DHAVE_GCC_GET_CPUID)
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_GCC_GET_CPUID")
 ENDIF(HAVE_GCC_GET_CPUID)
 
 CHECK_C_SOURCE_COMPILES("#include <stdint.h>
@@ -289,28 +264,21 @@ CHECK_C_SOURCE_COMPILES("#include <stdint.h>
     }" NO_GCC_EBX_FPIC_BUG)
 
 IF(NOT NO_GCC_EBX_FPIC_BUG)
-  add_compile_options(-DUSE_GCC_GET_CPUID)
+  SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_GCC_GET_CPUID")
 ENDIF(NOT NO_GCC_EBX_FPIC_BUG)
 
 FIND_PACKAGE(SSE) # checks SSE, AVX and AVX2
 IF(C_SSE2_FOUND)
   MESSAGE(STATUS "SSE2 Found")
-  # TODO: Work out correct way to do this.  Note that C_SSE2_FLAGS is often
-  # empty, in which case it expands to " " flag which is bad
-  SET(CMAKE_C_FLAGS "${C_SSE2_FLAGS} ${CMAKE_C_FLAGS}")
-  SET(CMAKE_CXX_FLAGS "${C_SSE2_FLAGS} ${CMAKE_CXX_FLAGS}")
-  add_compile_options(-DUSE_SSE2)
+  SET(CMAKE_C_FLAGS "${C_SSE2_FLAGS} -DUSE_SSE2 ${CMAKE_C_FLAGS}")
 ENDIF(C_SSE2_FOUND)
 IF(C_SSE4_1_FOUND AND C_SSE4_2_FOUND)
-  SET(CMAKE_C_FLAGS "${C_SSE4_1_FLAGS} ${C_SSE4_2_FLAGS} ${CMAKE_C_FLAGS}")
-  SET(CMAKE_CXX_FLAGS "${C_SSE4_1_FLAGS} ${C_SSE4_2_FLAGS} ${CMAKE_CXX_FLAGS}")
-  add_compile_options(-DUSE_SSE4_1 -DUSE_SSE4_2)
+  SET(CMAKE_C_FLAGS "${C_SSE4_1_FLAGS} -DUSE_SSE4_1 ${C_SSE4_2_FLAGS} -DUSE_SSE4_2 ${CMAKE_C_FLAGS}")
 ENDIF()
 IF(C_SSE3_FOUND)
   MESSAGE(STATUS "SSE3 Found")
-  SET(CMAKE_C_FLAGS "${C_SSE3_FLAGS} ${CMAKE_C_FLAGS}")
-  SET(CMAKE_CXX_FLAGS "${C_SSE3_FLAGS} ${CMAKE_CXX_FLAGS}")
-  add_compile_options(-DUSE_SSE3)
+  SET(CMAKE_C_FLAGS "${C_SSE3_FLAGS} -DUSE_SSE3 ${CMAKE_C_FLAGS}")
+  SET(CMAKE_CXX_FLAGS "${C_SSE3_FLAGS} -DUSE_SSE3 ${CMAKE_CXX_FLAGS}")
 ENDIF(C_SSE3_FOUND)
 
 # we don't set -mavx and -mavx2 flags globally, but only for specific files
@@ -318,11 +286,12 @@ ENDIF(C_SSE3_FOUND)
 # add USE_AVX and USE_AVX2 macro defines
 IF(C_AVX_FOUND)
   MESSAGE(STATUS "AVX Found")
-  add_compile_options(-DUSE_AVX)
+  SET(CMAKE_C_FLAGS "-DUSE_AVX ${CMAKE_C_FLAGS}")
 ENDIF(C_AVX_FOUND)
 IF(C_AVX2_FOUND)
   MESSAGE(STATUS "AVX2 Found")
-  add_compile_options(-DUSE_AVX2)
+  SET(CMAKE_C_FLAGS "-DUSE_AVX2 ${CMAKE_C_FLAGS}")
+  SET(CMAKE_CXX_FLAGS "-DUSE_AVX2 ${CMAKE_CXX_FLAGS}")
 ENDIF(C_AVX2_FOUND)
 
 CHECK_C_SOURCE_RUNS("
@@ -406,26 +375,10 @@ MACRO(Install_Required_Library ln)
 ENDMACRO(Install_Required_Library libname)
 
 FIND_PACKAGE(BLAS)
-SET(AT_MKL_ENABLED 0)
-SET(AT_MKL_MT 0)
 IF(BLAS_FOUND)
   SET(USE_BLAS 1)
   IF(BLAS_INFO STREQUAL "mkl")
     ADD_DEFINITIONS(-DTH_BLAS_MKL)
-    IF(NOT BLAS_INCLUDE_DIR)
-      MESSAGE(FATAL_ERROR "MKL is used, but MKL header files are not found. \
-        You can get them by `conda install mkl-include` if using conda (if \
-        it is missing, run `conda upgrade -n root conda` first), and \
-        `pip install mkl-devel` if using pip. If build fails with header files \
-        available in the system, please make sure that CMake will search the \
-        directory containing them, e.g., by setting CMAKE_INCLUDE_PATH.")
-    ENDIF()
-    IF(MSVC AND MKL_LIBRARIES MATCHES ".*libiomp5md\\.lib.*")
-      ADD_DEFINITIONS(-D_OPENMP_NOFORCE_MANIFEST)
-      SET(AT_MKL_MT 1)
-    ENDIF()
-    INCLUDE_DIRECTORIES(${BLAS_INCLUDE_DIR})  # include MKL headers
-    SET(AT_MKL_ENABLED 1)
   ENDIF()
 ENDIF(BLAS_FOUND)
 
@@ -477,9 +430,7 @@ else()
   add_subdirectory(src/THCS)
 endif()
 
-IF (NOT NO_CUDA)
-  find_package(CuDNN)
-ENDIF()
+find_package(CuDNN)
 IF(NOT AT_CUDA_ENABLED OR NOT CUDNN_FOUND)
   MESSAGE(STATUS "CuDNN not found. Compiling without CuDNN support")
   set(AT_CUDNN_ENABLED 0)
@@ -488,18 +439,18 @@ ELSE()
   set(AT_CUDNN_ENABLED 1)
 ENDIF()
 
-if(NO_MKLDNN)
-  message("disabling MKLDNN because NO_MKLDNN is set")
-  set(AT_MKLDNN_ENABLED 0)
+if(NO_NNPACK)
+  message("disabling NNPACK because NO_NNPACK is set")
+  set(AT_NNPACK_ENABLED 0)
 else()
-  find_package(MKLDNN)
-  if(NOT MKLDNN_FOUND)
-    message(STATUS "MKLDNN not found. Compiling without MKLDNN support")
-    set(AT_MKLDNN_ENABLED 0)
-  else()
-    INCLUDE_DIRECTORIES(${MKLDNN_INCLUDE_DIRS})
-    set(AT_MKLDNN_ENABLED 1)
-  endif()
+  find_package(NNPACK)
+  if(NOT NNPACK_FOUND)
+    MESSAGE(STATUS "NNPACK not found. Compiling without nNPACK support")
+    set(AT_NNPACK_ENABLED 0)
+  ELSE()
+    INCLUDE_DIRECTORIES(${NNPACK_INCLUDE_DIRS})
+    set(AT_NNPACK_ENABLED 1)
+  ENDIF()
 endif()
 
 set(cwrap_files
@@ -517,7 +468,6 @@ ${CMAKE_CURRENT_SOURCE_DIR}/src/THCUNN)
 add_subdirectory(src/ATen)
 include_directories(
 ${CMAKE_CURRENT_SOURCE_DIR}/src
-${CMAKE_CURRENT_SOURCE_DIR}/../third_party/catch/single_include
 ${CMAKE_CURRENT_BINARY_DIR}/src/ATen)
 if(NOT NO_CUDA)
   include_directories(${CUDA_INCLUDE_DIRS})

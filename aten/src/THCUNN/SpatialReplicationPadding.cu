@@ -1,5 +1,4 @@
 #include "THCUNN.h"
-#include "THCTensor.hpp"
 #include "common.h"
 #include "THCDeviceTensor.cuh"
 #include "THCDeviceTensorUtils.cuh"

@@ -13,7 +13,7 @@ class StudentT(Distribution):
 
     Example::
 
-        >>> m = StudentT(torch.tensor([2.0]))
+        >>> m = StudentT(torch.Tensor([2.0]))
         >>> m.sample()  # Student's t-distributed with degrees of freedom=2
          0.1046
         [torch.FloatTensor of size 1]
@@ -21,7 +21,7 @@ class StudentT(Distribution):
     Args:
         df (float or Tensor): degrees of freedom
     """
-    arg_constraints = {'df': constraints.positive, 'loc': constraints.real, 'scale': constraints.positive}
+    params = {'df': constraints.positive, 'loc': constraints.real, 'scale': constraints.positive}
     support = constraints.real
     has_rsample = True
 
@@ -39,11 +39,11 @@ class StudentT(Distribution):
         m[self.df <= 1] = float('nan')
         return m
 
-    def __init__(self, df, loc=0., scale=1., validate_args=None):
+    def __init__(self, df, loc=0., scale=1.):
         self.df, self.loc, self.scale = broadcast_all(df, loc, scale)
         self._chi2 = Chi2(df)
         batch_shape = torch.Size() if isinstance(df, Number) else self.df.size()
-        super(StudentT, self).__init__(batch_shape, validate_args=validate_args)
+        super(StudentT, self).__init__(batch_shape)
 
     def rsample(self, sample_shape=torch.Size()):
         # NOTE: This does not agree with scipy implementation as much as other distributions.
@@ -60,8 +60,7 @@ class StudentT(Distribution):
         return self.loc + self.scale * Y
 
     def log_prob(self, value):
-        if self._validate_args:
-            self._validate_sample(value)
+        self._validate_log_prob_arg(value)
         y = (value - self.loc) / self.scale
         Z = (self.scale.log() +
              0.5 * self.df.log() +

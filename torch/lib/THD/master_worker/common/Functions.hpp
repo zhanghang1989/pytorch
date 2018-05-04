@@ -169,9 +169,7 @@ enum Functions: std::uint16_t {
   tensorAbs,
   tensorSigmoid,
   tensorLog,
-  tensorLog10,
   tensorLog1p,
-  tensorLog2,
   tensorExp,
   tensorExpm1,
   tensorCos,
@@ -210,10 +208,8 @@ enum Functions: std::uint16_t {
   tensorLogspace,
   tensorRand,
   tensorRandn,
-  tensorLogicalAndAll,
-  tensorLogicalAnd,
-  tensorLogicalAnyAll,
-  tensorLogicalAny,
+  tensorLogicalall,
+  tensorLogicalany,
 
   // th_random
   tensorRandom,

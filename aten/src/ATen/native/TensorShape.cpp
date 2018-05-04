@@ -1,5 +1,4 @@
 #include "ATen/ATen.h"
-#include "ATen/Error.h"
 #include "ATen/ExpandUtils.h"
 #include "ATen/NativeFunctions.h"
 #include "ATen/WrapDimUtils.h"
@@ -14,29 +13,24 @@ static void check_cat_no_zero_dim(TensorList tensors) {
   for(size_t i = 0; i < tensors.size(); ++i) {
     auto& t = tensors[i];
     if (t.dim() == 0) {
-      AT_ERROR("zero-dimensional tensor (at position ", i, ") cannot be concatenated");
+      runtime_error("zero-dimensional tensor (at position %zu) cannot be concatenated", i);
     }
   }
 }
 
 Tensor & cat_out(Tensor & result, TensorList tensors, int64_t dim) {
   check_cat_no_zero_dim(tensors);
-  dim = legacy_cat_wrap_dim(dim, tensors);
   return at::_cat_out(result, tensors, dim);
 }
 
 Tensor cat(TensorList tensors, int64_t dim) {
   check_cat_no_zero_dim(tensors);
-  dim = legacy_cat_wrap_dim(dim, tensors);
   return at::_cat(tensors, dim);
 }
 
 std::vector<Tensor> chunk(const Tensor& self, int64_t chunks, int64_t dim) {
   if (self.dim() == 0) {
-    AT_ERROR("chunk expects at least a 1-dimensional tensor");
-  }
-  if (chunks <= 0) {
-    AT_ERROR("chunk expects `chunks` to be greater than 0, got: ", chunks);
+    throw std::runtime_error("chunk expects at least a 1-dimensional tensor");
   }
   int64_t split_size = (self.size(dim) + chunks - 1) / chunks;
   // ensure this is dispatched through Tensor/Type, rather than the native function directly.
@@ -47,42 +41,11 @@ Tensor diagflat(const Tensor& self, int64_t offset) {
   return self.contiguous().view(-1).diag(offset);
 }
 
-Tensor diagonal(const Tensor& self, int64_t offset, int64_t dim1_, int64_t dim2_) {
-  int64_t nDims = self.dim();
-  int64_t dim1 = maybe_wrap_dim(dim1_, nDims);
-  int64_t dim2 = maybe_wrap_dim(dim2_, nDims);
-  AT_CHECK(dim1 != dim2, "diagonal dimensions cannot be identical ", dim1_, ", ", dim2_);
-  int64_t diag_size;
-  int64_t storage_offset = self.storage_offset();
-  // compute storage offset and size for the diagonal
-  // for positive values of offset (above the main diagonal)
-  // "leftmost columns" (along dim2) are dropped
-  // for negative values of offset (below the main diagonal)
-  // "topmost rows" (along dim1) are dropped.
-  // Note that we invert +/- in the second to absorb the negative
-  // sign in the offset.
-  if (offset >= 0) {
-    diag_size = std::min(self.size(dim1), self.size(dim2)-offset);
-    storage_offset += offset * self.stride(dim2);
-  } else {
-    diag_size = std::min(self.size(dim1)+offset, self.size(dim2));
-    storage_offset -= offset * self.stride(dim1);
+Tensor diagonal(const Tensor& self, int64_t offset) {
+  if (self.dim() != 2) {
+    throw std::runtime_error("diagonal expects a 2-dimensional tensor");
   }
-  AT_CHECK(diag_size > 0, "invalid diagonal offset ", offset); // the diagonal offset was too large in magnitude
-
-  // construct new size and stride: we drop dim1 and dim2 (maximum first for not changing the index of the minumum)
-  // the new ("joint") dimension is appended to the end of the shape / stride to match numpy semantics
-  auto sizes = std::vector<int64_t>(self.sizes());
-  auto strides = std::vector<int64_t>(self.strides());
-  sizes.erase(sizes.begin() + std::max(dim1, dim2));
-  strides.erase(strides.begin() + std::max(dim1, dim2));
-  sizes.erase(sizes.begin() + std::min(dim1, dim2));
-  strides.erase(strides.begin() + std::min(dim1, dim2));
-  sizes.push_back(diag_size);
-  strides.push_back(self.stride(dim1)+self.stride(dim2));
-
-  // return view with new parameters
-  return self.as_strided(sizes, strides, storage_offset);
+  return self.diag(offset);
 }
 
 Tensor expand(const Tensor& self, IntList size) {
@@ -107,13 +70,13 @@ Tensor expand_as(const Tensor& self, const Tensor& other) {
 }
 
 Tensor narrow(const Tensor& self, int64_t dim, int64_t start, int64_t length) {
-  AT_CHECK(self.dim() > 0, "narrow() cannot be applied to a 0-dim tensor.");
+  AT_ASSERT(self.dim() > 0, "narrow() cannot be applied to a 0-dim tensor.");
   auto cur_size = self.size(dim);
   if (start < 0 || start >= cur_size) {
-    AT_ERROR("start out of range");
+    runtime_error("start out of range");
   }
   if (length <= 0 || start > cur_size - length) {
-    AT_ERROR("length out of range");
+    runtime_error("length out of range");
   }
   return at::native::slice(self, dim, start, start + length, 1);
 }
@@ -121,7 +84,7 @@ Tensor narrow(const Tensor& self, int64_t dim, int64_t start, int64_t length) {
 Tensor permute(const Tensor& self, IntList dims) {
   auto nDims = self.dim();
   if (dims.size() != (size_t)nDims) {
-    AT_ERROR("number of dims don't match in permute");
+    runtime_error("number of dims don't match in permute");
   }
   auto oldSizes = self.sizes();
   auto oldStrides = self.strides();
@@ -131,7 +94,7 @@ Tensor permute(const Tensor& self, IntList dims) {
   for (int64_t i = 0; i < nDims; i++) {
     auto dim = maybe_wrap_dim(dims[i], nDims);
     if (seen[dim]) {
-      AT_ERROR("repeated dim in permute");
+      runtime_error("repeated dim in permute");
     }
     seen[dim] = true;
     newSizes[i] = oldSizes[dim];
@@ -142,7 +105,7 @@ Tensor permute(const Tensor& self, IntList dims) {
 
 Tensor repeat(const Tensor& self, IntList repeats) {
   if (repeats.size() < (size_t)self.dim()) {
-    AT_ERROR("Number of dimensions of repeat dims can not be smaller than number of dimensions of tensor");
+    runtime_error("Number of dimensions of repeat dims can not be smaller than number of dimensions of tensor");
   }
 
   // Add new leading dimensions to the tensor if the
@@ -184,7 +147,7 @@ static std::vector<int64_t> infer_size(IntList shape, int64_t numel) {
     } else if (shape[dim] >= 0) {
       newsize *= shape[dim];
     } else {
-      AT_ERROR("invalid shape dimension ", shape[dim]);
+      runtime_error("invalid shape dimension %zd", shape[dim]);
     }
   }
 
@@ -249,7 +212,7 @@ compute_stride(const Tensor& self, IntList newshape) {
 
 Tensor reshape(const Tensor& self, IntList proposed_shape) {
   if (self.type().is_sparse()) {
-    AT_ERROR("reshape is not implemented for sparse tensors");
+    runtime_error("reshape is not implemented for sparse tensors");
   }
   auto shape = infer_size(proposed_shape, self.numel());
   if (auto stride = compute_stride(self, shape)) {
@@ -260,7 +223,7 @@ Tensor reshape(const Tensor& self, IntList proposed_shape) {
 
 Tensor select(const Tensor& self, int64_t dim, int64_t index) {
   int64_t ndim = self.dim();
-  AT_CHECK(ndim > 0, "select() cannot be applied to a 0-dim tensor.");
+  AT_ASSERT(ndim > 0, "select() cannot be applied to a 0-dim tensor.");
   dim = maybe_wrap_dim(dim, ndim);
   auto size = self.size(dim);
   if (index < -size || index >= size) {
@@ -282,7 +245,7 @@ Tensor select(const Tensor& self, int64_t dim, int64_t index) {
 
 Tensor slice(const Tensor& self, int64_t dim, int64_t start, int64_t end, int64_t step) {
   int64_t ndim = self.dim();
-  AT_CHECK(ndim > 0, "slice() cannot be applied to a 0-dim tensor.");
+  AT_ASSERT(ndim > 0, "slice() cannot be applied to a 0-dim tensor.");
   dim = maybe_wrap_dim(dim, ndim);
   auto sizes = std::vector<int64_t>(self.sizes());
   auto strides = std::vector<int64_t>(self.strides());
@@ -396,9 +359,10 @@ Tensor& stack_out(Tensor& result, TensorList tensors, int64_t dim) {
 static inline Tensor & sparse_transpose_(Tensor & self, int64_t dim0, int64_t dim1) {
   int64_t ndimI = self._indices().size(0);
   if (dim0 >= ndimI || dim1 >= ndimI) {
-    AT_ERROR(
+    runtime_error(
         "sparse transpose_: transposed dimensions must be sparse ",
-        "Got nDimI: ", ndimI, ", d0: ", dim0, ", d1: ", dim1);
+        "Got nDimI: %llu, d0: %llu, d1: %llu",
+        (long long)ndimI, (long long)dim0, (long long)dim1);
   }
 
   auto indices = self._indices();
@@ -438,7 +402,8 @@ Tensor & transpose_(Tensor & self, int64_t dim0, int64_t dim1) {
 
 Tensor & t_(Tensor & self) {
   if (self.ndimension() != 2) {
-    AT_ERROR("t_() expects a 2D tensor, but self is ", self.ndimension());
+    runtime_error("t_() expects a 2D tensor, but self is %llu",
+                  (long long)self.ndimension());
   }
   return self.transpose_(0, 1);
 }
@@ -522,7 +487,7 @@ Tensor & squeeze_(Tensor& self, int64_t dim) {
 // _unsafe_view() differs from view() in that the returned tensor isn't treated
 // as a view for the purposes of automatic differentiation. (It's not listed in
 // VIEW_FUNCTIONS in gen_autograd.py).  It's only safe to use if the `self` tensor
-// is temporary. For example, the viewed tensor here (a + b) is discarded immediately
+// is temporary. For example, the viewed tensor here is discarded immediately
 // after viewing:
 //
 //  res = at::_unsafe_view(a + b, size);

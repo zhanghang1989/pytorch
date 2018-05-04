@@ -290,20 +290,24 @@ bool CUDA_tensor_apply2(at::Tensor a,
     return false;
   }
 
-  /*
-  Expands readable/writable tensors whose indices may be "overlapped."
-  This ensures that each element of the tensor is operated on once and only 
-  once.
-  */
+  // If tensor args have overlapping indices and are read/write, then
+  // we must expand the tensor to a contiguous form first, since
+  // otherwise there are conflicting writes. Upon copying back to the
+  // non-contiguous form, there will be conflicting writes, but at
+  // least with copy, one of the updaters will win atomically. This is
+  // a sketchy property of the old system as well (writing into all
+  // indices of a tensor with overlapping indices should probably be
+  // an error, since it is unclear which one should win), but we will
+  // preserve this last-writer-wins (in arbitrary copy order) behavior.
   Tensor oldA;
   Tensor oldB;
 
-  if (aType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(a)) {
+  if (aType == TensorArgType::ReadWrite && detail::overlappingIndices(a)) {
     // Must perform in contiguous space
     oldA = a;
     a = a.contiguous();
   }
-  if (bType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(b)) {
+  if (bType == TensorArgType::ReadWrite && detail::overlappingIndices(b)) {
     // Must perform in contiguous space
     oldB = b;
     b = b.contiguous();
@@ -479,26 +483,30 @@ bool CUDA_tensor_apply3(at::Tensor a,
     return false;
   }
 
-  /*
-  Expands readable/writable tensors whose indices may be "overlapped."
-  This ensures that each element of the tensor is operated on once and only 
-  once.
-  */
+  // If tensor args have overlapping indices and are read/write, then
+  // we must expand the tensor to a contiguous form first, since
+  // otherwise there are conflicting writes. Upon copying back to the
+  // non-contiguous form, there will be conflicting writes, but at
+  // least with copy, one of the updaters will win atomically. This is
+  // a sketchy property of the old system as well (writing into all
+  // indices of a tensor with overlapping indices should probably be
+  // an error, since it is unclear which one should win), but we will
+  // preserve this last-writer-wins (in arbitrary copy order) behavior.
   Tensor oldA;
   Tensor oldB;
   Tensor oldC;
 
-  if (aType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(a)) {
+  if (aType == TensorArgType::ReadWrite && detail::overlappingIndices(a)) {
     // Must perform in contiguous space
     oldA = a;
     a = a.contiguous();
   }
-  if (bType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(b)) {
+  if (bType == TensorArgType::ReadWrite && detail::overlappingIndices(b)) {
     // Must perform in contiguous space
     oldB = b;
     b = b.contiguous();
   }
-  if (cType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(c)) {
+  if (cType == TensorArgType::ReadWrite && detail::overlappingIndices(c)) {
     // Must perform in contiguous space
     oldC = c;
     c = c.contiguous();
@@ -712,32 +720,36 @@ bool CUDA_tensor_apply4(at::Tensor a,
     return false;
   }
 
-  /*
-  Expands readable/writable tensors whose indices may be "overlapped."
-  This ensures that each element of the tensor is operated on once and only 
-  once.
-  */
+  // If tensor args have overlapping indices and are read/write, then
+  // we must expand the tensor to a contiguous form first, since
+  // otherwise there are conflicting writes. Upon copying back to the
+  // non-contiguous form, there will be conflicting writes, but at
+  // least with copy, one of the updaters will win atomically. This is
+  // a sketchy property of the old system as well (writing into all
+  // indices of a tensor with overlapping indices should probably be
+  // an error, since it is unclear which one should win), but we will
+  // preserve this last-writer-wins (in arbitrary copy order) behavior.
   Tensor oldA;
   Tensor oldB;
   Tensor oldC;
   Tensor oldD;
 
-  if (aType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(a)) {
+  if (aType == TensorArgType::ReadWrite && detail::overlappingIndices(a)) {
     // Must perform in contiguous space
     oldA = a;
     a = a.contiguous();
   }
-  if (bType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(b)) {
+  if (bType == TensorArgType::ReadWrite && detail::overlappingIndices(b)) {
     // Must perform in contiguous space
     oldB = b;
     b = b.contiguous();
   }
-  if (cType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(c)) {
+  if (cType == TensorArgType::ReadWrite && detail::overlappingIndices(c)) {
     // Must perform in contiguous space
     oldC = c;
     c = c.contiguous();
   }
-  if (dType == TensorArgType::ReadWrite && detail::maybeOverlappingIndices(c)) {
+  if (dType == TensorArgType::ReadWrite && detail::overlappingIndices(c)) {
     // Must perform in contiguous space
     oldD = d;
     d = d.contiguous();

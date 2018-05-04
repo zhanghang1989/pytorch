@@ -10,7 +10,6 @@
 #include "gloo/transport/tcp/device.h"
 
 #include <algorithm>
-#include <unistd.h>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -37,10 +36,6 @@
     case ::at::ScalarType::Float: func<float>(args); break;                   \
     case ::at::ScalarType::Double: func<double>(args); break;                 \
     case ::at::ScalarType::Half: func<gloo::float16>(args); break;            \
-    case ::at::ScalarType::Char: func<int8_t>(args); break;                   \
-    case ::at::ScalarType::Byte: func<uint8_t>(args); break;                  \
-    case ::at::ScalarType::Int: func<int32_t>(args); break;                   \
-    case ::at::ScalarType::Long: func<int64_t>(args); break;                  \
     default:                                                                  \
       throw std::runtime_error("Invalid " + std::string(#func) + " function type"); \
   }
@@ -65,12 +60,9 @@ void DataChannelGloo::RequestGloo::wait() {
   _request.wait();
 }
 
-
-DataChannelGloo::Group::Group(const std::string& addr,
-                              port_type port,
-                              std::vector<rank_type> ranks,
-                              rank_type max_rank,
-                              int store_socket)
+DataChannelGloo::Group::Group(const std::string& addr, port_type port,
+                                      std::vector<rank_type> ranks, rank_type max_rank,
+                                      int store_socket)
   : DataChannel::Group(std::move(ranks), max_rank)
   , _store(new Store(addr, port, store_socket)) {}
 
@@ -123,11 +115,7 @@ DataChannelGloo::DataChannelGloo(InitMethod::Config config)
 }
 
 
-DataChannelGloo::~DataChannelGloo() {
-  if (_listen_socket != -1) {
-    ::close(_listen_socket);
-  }
-}
+DataChannelGloo::~DataChannelGloo() {}
 
 void DataChannelGloo::destroy() {}
 
